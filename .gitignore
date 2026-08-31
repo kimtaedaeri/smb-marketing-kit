@@ -1,0 +1,35 @@
+# ── 절대 커밋 금지: 크리덴셜·세션 ──
+.env
+.env.*
+*.key
+*.pem
+credentials.json
+# 네이버 로그인 세션 (Playwright storage_state) — 계정 탈취 위험
+storage_state.json
+*_storage_state.json
+.auth/
+sessions/
+
+# 사용자별 실제 설정 (템플릿만 커밋)
+brand_voice.md
+policy.yaml
+
+# 실행 로그·DB
+*.sqlite
+*.sqlite3
+*.db
+runs.db
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/

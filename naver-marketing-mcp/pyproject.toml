@@ -1,0 +1,23 @@
+[project]
+name = "naver-marketing-mcp"
+version = "0.0.1"
+description = "네이버 블로그 게시 · 파워링크 입찰을 Claude에서 호출하는 로컬 MCP (한국 갭 커버)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "mcp>=1.2.0",          # Model Context Protocol Python SDK (FastMCP)
+    "playwright>=1.48",    # 네이버 블로그 브라우저 자동화
+    "keyring>=25.0",       # OS 키체인 크리덴셜 저장 (클라우드 미전송)
+    "pyyaml>=6.0",         # policy.yaml 파싱
+]
+
+[project.scripts]
+naver-marketing-mcp = "naver_marketing_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["naver_marketing_mcp"]

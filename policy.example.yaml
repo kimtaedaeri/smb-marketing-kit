@@ -1,0 +1,33 @@
+# 마케팅 자동화 정책 (예시)
+# 실제 파일은 policy.yaml 로 복사해서 사용 (.gitignore 로 커밋 제외)
+
+brand:
+  name: "우리가게"
+  brand_voice_file: "brand_voice.md"
+
+# ── 오가닉 콘텐츠 게시 ──
+content:
+  platforms:                 # Blotato(글로벌) + 네이버(로컬 MCP)
+    - instagram
+    - linkedin
+    - naver_blog
+  approval: manual           # manual = 승인 후 게시(기본, 권장) / auto = 전자동(opt-in)
+  daily_cap:                 # 계정 정지 방어: 플랫폼별 하루 최대 게시 수
+    instagram: 2
+    linkedin: 1
+    naver_blog: 1
+  min_interval_min: 90       # 게시 간 최소 간격(분) + 랜덤 지연
+
+schedule:                    # 루틴 무인화 (릴스 4단계)
+  weekly_batch:
+    day: "monday"
+    time: "08:00"
+    count: 7                 # 이번 주 콘텐츠 7개 생성·예약
+
+# ── 퍼포먼스(유료광고): 네이버 파워링크 입찰 ──
+# 정책 스키마는 naver-powerlink-bidding 의 keywords.yaml 을 따른다.
+powerlink:
+  enabled: false             # P0에서 켜면 입찰 자동화 활성
+  keywords_file: "keywords.yaml"
+  daily_budget_krw: 30000
+  dry_run: true              # true = 실제 입찰 변경 없이 시뮬레이션만
