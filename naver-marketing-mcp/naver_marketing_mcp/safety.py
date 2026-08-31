@@ -5,11 +5,11 @@
 
 from __future__ import annotations
 
+import random
 import time
 from typing import Any
 
-# NOTE: 결정론적 랜덤이 필요 없으므로 표준 random 사용.
-import random
+from .db import count_posts_today
 
 
 class DailyCapExceeded(Exception):
@@ -17,31 +17,26 @@ class DailyCapExceeded(Exception):
 
 
 def check_daily_cap(policy: dict[str, Any], platform: str) -> None:
-    """policy 의 content.daily_cap[platform] 과 오늘 게시 수를 비교.
+    """policy 의 content.daily_cap[platform] 과 오늘 published 건수를 비교.
 
-    TODO(P0): runs.db(SQLite)에서 오늘 게시 건수를 조회해 상한과 비교.
-    지금은 상한값 존재 여부만 확인하는 골격.
+    상한 도달 시 DailyCapExceeded 를 던져 게시를 막는다.
+    상한 미설정(None)이면 통과하되, 설정을 권장한다.
     """
-    cap = (
-        policy.get("content", {})
-        .get("daily_cap", {})
-        .get(platform)
-    )
+    cap = policy.get("content", {}).get("daily_cap", {}).get(platform)
     if cap is None:
-        return  # 상한 미설정 → 통과 (단, 설정 권장)
-    # TODO: today_count = count_posts_today(platform); if today_count >= cap: raise
-    return
+        return
+    today = count_posts_today(platform)
+    if today >= cap:
+        raise DailyCapExceeded(
+            f"{platform} 오늘 게시 {today}건으로 일일 상한({cap}건) 도달. "
+            f"계정 보호를 위해 게시를 중단합니다. 내일 다시 시도하거나 policy.yaml 의 "
+            f"daily_cap.{platform} 을 조정하세요."
+        )
 
 
 def human_delay(policy: dict[str, Any]) -> None:
-    """게시 직전 랜덤 지연(초). min_interval_min 을 기준으로 소폭 무작위화.
+    """게시 직전 랜덤 지연(초). 봇처럼 즉시/규칙적으로 게시하지 않도록 한다.
 
-    봇처럼 즉시/규칙적으로 게시하지 않도록 한다.
+    배치 간격(min_interval_min)은 스케줄러가 관리하고, 여기서는 게시 직전 지터만 추가한다.
     """
-    base_min = policy.get("content", {}).get("min_interval_min", 0)
-    if not base_min:
-        # 최소한의 자연스러운 지연
-        time.sleep(random.uniform(1.5, 4.0))
-        return
-    # 실제 배치 스케줄러에서 간격을 관리하되, 게시 직전 소량 지터만 추가
     time.sleep(random.uniform(2.0, 6.0))

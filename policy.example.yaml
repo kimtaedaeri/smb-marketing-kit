@@ -5,6 +5,10 @@ brand:
   name: "우리가게"
   brand_voice_file: "brand_voice.md"
 
+# ── 네이버 계정 ──
+naver:
+  blog_id: "your_blog_id"    # blog.naver.com/<이 부분>
+
 # ── 오가닉 콘텐츠 게시 ──
 content:
   platforms:                 # Blotato(글로벌) + 네이버(로컬 MCP)
