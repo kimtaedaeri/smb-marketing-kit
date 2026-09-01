@@ -41,6 +41,7 @@ SELECTORS = {
     "photo_btn": "button.se-image-toolbar-button",  # 로컬 사진 추가 → OS 파일창
     "image_component": ".se-image",                 # 업로드된 이미지 컴포넌트
     "publish_open_btn": "button.publish_btn__m9KHH",
+    "tag_input": "input#tag-input",                 # 발행 패널 태그 입력
     "private_radio": 'label[for="open_private"]',
     "publish_confirm_btn": "button.confirm_btn__WEaBq",
 }
@@ -212,6 +213,22 @@ def _insert_images(page: Any, frame: Any, image_paths: list[str]) -> int:
     return frame.locator(SELECTORS["image_component"]).count() - before
 
 
+def _add_tags(page: Any, frame: Any, tags: list[str]) -> int:
+    """발행 패널 태그 입력에 태그를 추가한다(각 태그 입력 후 Enter). 추가한 개수 반환."""
+    added = 0
+    inp = frame.locator(SELECTORS["tag_input"])
+    inp.click()
+    for t in tags[:30]:
+        t = t.lstrip("#").strip()
+        if not t:
+            continue
+        page.keyboard.type(t, delay=random.uniform(*_TYPE_DELAY) * 1000)
+        page.keyboard.press("Enter")
+        time.sleep(0.3)
+        added += 1
+    return added
+
+
 def _type_text(page: Any, text: str) -> None:
     """포커스된 contenteditable 에 사람 같은 지연으로 타이핑(여러 줄 지원)."""
     lines = text.split("\n")
@@ -281,7 +298,13 @@ def publish(
             frame.locator(SELECTORS["publish_open_btn"]).first.click()
             time.sleep(2.0)
 
-            # 공개범위: 비공개
+            # 태그 추가
+            tags_added = 0
+            if tags:
+                tags_added = _add_tags(page, frame, tags)
+                _human_pause(0.3, 0.7)
+
+            # 공개범위: 비공개(기본) / False 면 전체공개(기본 선택) 유지
             if private:
                 frame.locator(SELECTORS["private_radio"]).click()
                 _human_pause(0.3, 0.7)
@@ -320,5 +343,6 @@ def publish(
         "private": private,
         "post_url": post_url,
         "images_inserted": inserted_images,
+        "tags_added": tags_added,
         "screenshot": str(shot),
     }

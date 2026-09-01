@@ -12,12 +12,17 @@ Blotato·Higgsfield가 못 하는 한국 갭만 담당합니다.
 
 | 도구 | 설명 | 상태 |
 | --- | --- | --- |
-| `connect_naver` | 네이버 로그인(최초 1회, 세션 저장) | 🔨 스텁 |
-| `naver_blog_publish` | 블로그 글 게시 — 기본 **승인 게이트**(초안 미리보기 후 게시) | 🔨 스텁 |
-| `powerlink_bidding` | 파워링크 입찰 1회 실행(dry-run 지원) | 🔨 스텁 (naver-powerlink-bidding 통합 예정) |
+| `connect_naver` | 네이버 로그인(진짜 Chrome 창, 최초 1회, 쿠키 세션 저장) | ✅ 검증 |
+| `naver_blog_publish` | 블로그 글 게시 — 제목·본문·**이미지·태그**·공개/비공개, 기본 **승인 게이트** | ✅ 검증 |
+| `powerlink_bidding` | 파워링크 입찰 1회 실행(dry-run 지원) | 🔨 브리지(설치 시 연결) |
 | `collect_performance` | 네이버 성과 수집 | 🔜 P1 |
 
-> 🔨 = 인터페이스·안전장치 골격 완성, 실제 자동화 로직은 다음 단계에서 구현.
+> ✅ 실제 로그인 세션에서 발행까지 검증 완료(SmartEditor ONE). 🔨 = 골격.
+
+### 네이버 블로그 발행 방식 (검증됨)
+
+- **로그인**: Playwright 직접실행 대신 진짜 Chrome 을 원격디버깅 포트로 켜고 CDP attach → 자동화 탐지 회피. 세션은 쿠키 JSON(`.auth/naver_state.json`)으로 저장·주입.
+- **에디터**: SmartEditor ONE(`iframe#mainFrame`) — 제목/본문 입력, 사진(로컬 업로드), 태그, 공개범위, 발행까지 자동.
 
 ## 설치
 

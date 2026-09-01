@@ -21,7 +21,7 @@ def main() -> None:
     images = [str(img)] if img.exists() else None
     result = publish(
         blog_id=blog_id, title=TITLE, body_markdown=BODY,
-        image_paths=images, private=True,
+        image_paths=images, tags=["마케팅자동화", "테스트", "smb"], private=True,
     )
     print("RESULT:", result)
 
