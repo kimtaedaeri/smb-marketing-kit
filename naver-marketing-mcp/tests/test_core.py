@@ -38,6 +38,27 @@ def test_cap_none_passes(tmp_db: Path) -> None:
     check_daily_cap({"content": {"daily_cap": {}}}, "naver_blog")  # 예외 없어야 함
 
 
+def test_channel_validate_length(_tmp: Path) -> None:
+    from naver_marketing_mcp.channels import validate_post
+    r = validate_post("x", "가" * 300, image_count=1)  # 280 초과
+    assert not r["ok"] and r["errors"], "X 280자 초과인데 통과됨"
+
+
+def test_channel_instagram_requires_image(_tmp: Path) -> None:
+    from naver_marketing_mcp.channels import validate_post
+    r = validate_post("instagram", "짧은 캡션", hashtags=["a"], image_count=0)
+    assert not r["ok"], "인스타 이미지 0장인데 통과됨"
+    r2 = validate_post("instagram", "짧은 캡션", hashtags=["a"], image_count=1)
+    assert r2["ok"], "인스타 이미지 1장인데 실패"
+
+
+def test_channel_assemble_and_alias(_tmp: Path) -> None:
+    from naver_marketing_mcp.channels import assemble_caption, get_spec
+    cap = assemble_caption("ig", "본문입니다", ["#a", "b", "c", "d", "e", "f"])
+    assert cap.count("#") == 5, "인스타 해시태그 5개로 절제 안 됨"
+    assert get_spec("twitter")["channel"] == "x", "별칭 정규화 실패"
+
+
 def _run() -> None:
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

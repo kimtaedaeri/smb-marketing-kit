@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from . import naver_blog, powerlink
+from . import channels, naver_blog, powerlink
 from .db import record_post
 from .policy import load_policy
 from .safety import DailyCapExceeded, check_daily_cap, human_delay
@@ -132,6 +132,43 @@ def powerlink_bidding(dry_run: bool = True) -> dict:
 def collect_performance(days: int = 7) -> dict:
     """최근 N일 네이버 블로그·파워링크 성과를 수집한다. (P1 예정)"""
     return {"status": "planned", "message": "collect_performance 는 P1 에서 구현됩니다."}
+
+
+# ────────────────────────────────────────────────────────────
+# 멀티 SNS 재가공: 채널 규격·검증 (배포는 Blotato MCP 담당)
+# ────────────────────────────────────────────────────────────
+@mcp.tool()
+def channel_spec(channel: str | None = None) -> dict:
+    """채널별 재가공 규격(길이·해시태그·이미지·톤)을 반환한다.
+
+    블로그 글을 인스타·링크드인·X·스레드·페이스북에 재가공할 때 각 채널 규칙을 확인용.
+    channel 미지정 시 전체.
+    """
+    if channel:
+        return channels.get_spec(channel)
+    return {"channels": {c: channels.get_spec(c) for c in channels.CHANNELS}}
+
+
+@mcp.tool()
+def validate_channel_post(
+    channel: str,
+    caption: str,
+    hashtags: list[str] | None = None,
+    image_count: int = 0,
+) -> dict:
+    """재가공한 채널별 초안이 규칙(길이·해시태그·이미지)에 맞는지 검증한다.
+    Blotato 로 배포하기 전에 호출해 위반을 걸러낸다.
+    """
+    return channels.validate_post(channel, caption, hashtags, image_count)
+
+
+@mcp.tool()
+def assemble_channel_caption(
+    channel: str, body: str, hashtags: list[str] | None = None
+) -> dict:
+    """채널 규칙에 맞게 본문+해시태그를 최종 캡션으로 조립한다."""
+    return {"channel": channels.normalize_channel(channel),
+            "caption": channels.assemble_caption(channel, body, hashtags)}
 
 
 def main() -> None:
