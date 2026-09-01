@@ -46,6 +46,7 @@ def naver_blog_publish(
     body_markdown: str,
     tags: list[str] | None = None,
     image_paths: list[str] | None = None,
+    private: bool = True,
     approve: bool = False,
 ) -> dict:
     """네이버 블로그에 글을 게시한다.
@@ -92,6 +93,7 @@ def naver_blog_publish(
             body_markdown=body_markdown,
             tags=tags,
             image_paths=image_paths,
+            private=private,
         )
     except Exception as e:  # noqa: BLE001 — 사용자에게 원인 전달 후 로그
         record_post("naver_blog", status="failed", title=title, error=str(e))

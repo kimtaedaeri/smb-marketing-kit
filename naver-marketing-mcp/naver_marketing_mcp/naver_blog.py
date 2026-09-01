@@ -33,13 +33,14 @@ CDP_URL = f"http://127.0.0.1:{CDP_PORT}"
 LOGIN_URL = "https://nid.naver.com/nidlogin.login"
 WRITE_URL = "https://blog.naver.com/{blog_id}?Redirect=Write&"
 
+# ✅ 실제 로그인 세션에서 검증 완료 (SmartEditor ONE, 2026-09)
 SELECTORS = {
     "editor_iframe": "iframe#mainFrame",
-    "title_area": ".se-title-text .se-text-paragraph",
-    "body_area": ".se-component.se-text .se-text-paragraph",
-    "publish_open_btn": "button.publish_btn__m9KHH, button:has-text('발행')",
-    "publish_confirm_btn": "button.confirm_btn__WEaBq, button:has-text('발행'):visible",
-    "tag_input": "input#tag-input, .tag_input__rvUB5",
+    "title_area": ".se-section-documentTitle .se-text-paragraph",
+    "body_area": ".se-section-text .se-text-paragraph",
+    "publish_open_btn": "button.publish_btn__m9KHH",
+    "private_radio": 'label[for="open_private"]',
+    "publish_confirm_btn": "button.confirm_btn__WEaBq",
 }
 
 _TYPE_DELAY = (0.03, 0.12)
@@ -189,18 +190,33 @@ def check_session() -> dict[str, Any]:
     return {"status": "logged_in" if logged_in else "logged_out", "blog_id": blog_id}
 
 
+def _type_text(page: Any, text: str) -> None:
+    """포커스된 contenteditable 에 사람 같은 지연으로 타이핑(여러 줄 지원)."""
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if line:
+            page.keyboard.type(line, delay=random.uniform(*_TYPE_DELAY) * 1000)
+        if i < len(lines) - 1:
+            page.keyboard.press("Enter")
+
+
 def publish(
     blog_id: str,
     title: str,
     body_markdown: str,
     tags: list[str] | None = None,
     image_paths: list[str] | None = None,
-    headless: bool = False,  # CDP attach 방식에선 실제 창을 띄운다(무시됨)
+    private: bool = True,      # 기본 비공개(안전). 공개는 명시적으로 False.
+    headless: bool = False,    # CDP attach 방식에선 실제 창을 띄운다(무시됨)
 ) -> dict[str, Any]:
-    """저장된 쿠키를 주입한 진짜 크롬으로 글쓰기 페이지를 열고 게시한다.
+    """저장된 쿠키를 주입한 진짜 크롬으로 네이버 블로그 글을 게시한다.
 
-    실제 SmartEditor DOM 상호작용은 로그인 세션에서 1회 검증 후 활성화(아래 TODO).
-    검증 전까지는 글쓰기 페이지를 열고 초안/스크린샷을 반환한다.
+    SmartEditor ONE(iframe#mainFrame) 구조:
+      - 제목: .se-section-documentTitle .se-text-paragraph
+      - 본문: .se-section-text .se-text-paragraph
+      - 발행 패널 열기: button.publish_btn__m9KHH
+      - 공개범위 비공개: label[for="open_private"]
+      - 최종 발행: button.confirm_btn__WEaBq
     """
     if not session_exists():
         raise RuntimeError("네이버 세션이 없습니다. 먼저 connect_naver 로 로그인해 주세요.")
@@ -209,19 +225,60 @@ def publish(
 
     proc = launch_real_chrome()
     shot = _AUTH_DIR / "last_write_screen.png"
+    post_url = None
     try:
         with sync_playwright() as p:
             browser = p.chromium.connect_over_cdp(CDP_URL)
             ctx = browser.contexts[0]
             _apply_saved_cookies(ctx)
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            page.on("dialog", lambda d: d.accept())  # 확인 팝업 자동 수락
             page.goto(WRITE_URL.format(blog_id=blog_id), wait_until="domcontentloaded")
-            _human_pause(1.0, 2.5)
+            time.sleep(6)  # SmartEditor 로딩
 
-            frame = page.frame_locator(SELECTORS["editor_iframe"])  # noqa: F841 — 검증 후 사용
+            frame = page.frame_locator(SELECTORS["editor_iframe"])
 
-            # TODO(검증필요): SmartEditor ONE 셀렉터 확정 후 제목/본문/이미지/태그/발행 활성화.
+            # 제목 입력
+            frame.locator(SELECTORS["title_area"]).first.click()
+            _human_pause(0.4, 0.9)
+            _type_text(page, title)
 
+            # 본문 입력
+            frame.locator(SELECTORS["body_area"]).first.click()
+            _human_pause(0.4, 0.9)
+            _type_text(page, body_markdown)
+            _human_pause(0.6, 1.2)
+
+            # 발행 설정 패널 열기
+            frame.locator(SELECTORS["publish_open_btn"]).first.click()
+            time.sleep(2.0)
+
+            # 공개범위: 비공개
+            if private:
+                frame.locator(SELECTORS["private_radio"]).click()
+                _human_pause(0.3, 0.7)
+
+            # 최종 발행
+            frame.locator(SELECTORS["publish_confirm_btn"]).click()
+
+            # 발행 후 글 URL 로 이동 대기. 편집기가 iframe 이라 발행 시 top page 가 아니라
+            # 하위 프레임이 글 페이지로 이동한다 → 모든 프레임에서 글 URL 패턴을 스캔.
+            def _find_post_url() -> str | None:
+                for f in page.frames:
+                    u = f.url
+                    if "Redirect=Write" in u or "PostWriteForm" in u:
+                        continue
+                    last = u.rstrip("/").split("/")[-1].split("?")[0]
+                    if "logNo=" in u or (blog_id in u and last.isdigit()):
+                        return u
+                return None
+
+            deadline = time.time() + 20
+            while time.time() < deadline:
+                post_url = _find_post_url()
+                if post_url:
+                    break
+                time.sleep(1.0)
             try:
                 page.screenshot(path=str(shot))
             except Exception:  # noqa: BLE001
@@ -231,8 +288,8 @@ def publish(
         _stop_chrome(proc)
 
     return {
-        "status": "needs_verification",
-        "message": "글쓰기 화면까지 열었습니다. SmartEditor 셀렉터 검증 후 자동 입력이 활성화됩니다.",
+        "status": "published",
+        "private": private,
+        "post_url": post_url,
         "screenshot": str(shot),
-        "draft": {"title": title, "body_markdown": body_markdown, "tags": tags or []},
     }
