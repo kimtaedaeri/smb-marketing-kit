@@ -138,6 +138,14 @@ def collect_performance(days: int = 7) -> dict:
 # Meta(인스타·페북) 무료 게시 — Blotato 없이 직접
 # ────────────────────────────────────────────────────────────
 @mcp.tool()
+def meta_preflight() -> dict:
+    """인스타·페북 연결 준비 상태를 점검하고, 초보자용으로 '지금 뭘 하면 되는지' 알려준다.
+    connect_meta 전에 먼저 불러 상태를 확인하는 용도.
+    """
+    return meta_auth.preflight()
+
+
+@mcp.tool()
 def connect_meta() -> dict:
     """인스타그램·페이스북 연결(OAuth). 브라우저 창이 뜨면 로그인·동의만 하면 되고,
     토큰 발급·장기토큰 변환·IG 계정 조회는 자동으로 처리해 로컬에 저장한다.

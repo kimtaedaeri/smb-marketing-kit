@@ -132,23 +132,7 @@ def _connect_via_broker(broker: str, timeout_sec: int) -> dict[str, Any]:
     if r.status_code != 200:
         return {"status": "error", "message": f"토큰 수령 실패({r.status_code})"}
     data = r.json()
-    pages = data.get("pages", [])
-    page = next((p for p in pages if p.get("ig_user_id")), pages[0] if pages else None)
-    if not page:
-        return {"status": "no_page", "message": "연결된 페이스북 페이지가 없습니다."}
-
-    state = {
-        "long_lived_user_token": data.get("long_lived_user_token"),
-        "page_id": page["page_id"],
-        "page_access_token": page["page_access_token"],
-        "ig_user_id": page.get("ig_user_id"),
-        "obtained_at": int(time.time()),
-    }
-    _AUTH_DIR.mkdir(parents=True, exist_ok=True)
-    STATE_JSON.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
-    return {"status": "connected", "via": "broker", "page_id": page["page_id"],
-            "ig_user_id": page.get("ig_user_id"), "ig_linked": page.get("ig_user_id") is not None,
-            "state_file": str(STATE_JSON)}
+    return _finalize(data.get("long_lived_user_token"), data.get("pages", []))
 
 
 def _connect_dev(app_id: str, app_secret: str, timeout_sec: int) -> dict[str, Any]:
@@ -198,39 +182,82 @@ def _connect_dev(app_id: str, app_secret: str, timeout_sec: int) -> dict[str, An
          "client_secret": app_secret, "fb_exchange_token": short},
     )["access_token"]
 
-    # 3) 페이지 + 페이지 토큰
-    pages = _get(f"{GRAPH}/me/accounts", {"access_token": long_lived}).get("data", [])
+    # 3) 페이지들 + 각 페이지의 IG 계정
+    raw = _get(f"{GRAPH}/me/accounts", {"access_token": long_lived}).get("data", [])
+    pages = []
+    for pg in raw:
+        ig = _get(f"{GRAPH}/{pg['id']}",
+                  {"fields": "instagram_business_account", "access_token": pg["access_token"]}
+                  ).get("instagram_business_account")
+        pages.append({"page_id": pg["id"], "page_name": pg.get("name"),
+                      "page_access_token": pg["access_token"],
+                      "ig_user_id": ig["id"] if ig else None})
+    return _finalize(long_lived, pages)
+
+
+# ── 결과 정리 + 초보자용 친절 안내 ────────────────────────────
+LINK_HELP = (
+    "인스타를 페이스북 페이지에 연결하면 돼요:\n"
+    "1) 인스타 앱 → 설정 및 개인정보 → 비즈니스/크리에이터 도구\n"
+    "2) 'Facebook 연결'(또는 페이지 연결) → 페이지 선택\n"
+    "페이지가 없으면 먼저 무료로 만드세요(페이스북 → 페이지 → 새 페이지 만들기).\n"
+    "연결 후 다시 '인스타 연결해줘'라고 하면 제가 확인할게요."
+)
+
+
+def _finalize(long_lived: str | None, pages: list[dict[str, Any]]) -> dict[str, Any]:
+    """페이지 목록에서 IG 연결된 페이지를 골라 저장하고, 초보자용 결과 메시지를 만든다."""
     if not pages:
-        return {"status": "no_page", "message": "연결된 페이스북 페이지가 없습니다. "
-                "인스타 비즈니스 계정을 페이지에 연결하세요."}
-    page = pages[0]
-    page_id = page["id"]
-    page_token = page["access_token"]
-
-    # 4) IG 비즈니스 계정 ID
-    ig = _get(
-        f"{GRAPH}/{page_id}",
-        {"fields": "instagram_business_account", "access_token": page_token},
-    ).get("instagram_business_account")
-    ig_user_id = ig["id"] if ig else None
-
+        return {
+            "status": "no_page",
+            "message": "로그인은 됐는데 연결된 페이스북 페이지가 없어요.",
+            "how": "페이스북에서 페이지를 무료로 만들고(페이스북 → 페이지 → 새 페이지), "
+                   "인스타를 그 페이지에 연결한 뒤 다시 '인스타 연결해줘'라고 해주세요.",
+        }
+    page = next((p for p in pages if p.get("ig_user_id")), pages[0])
     state = {
         "long_lived_user_token": long_lived,
-        "page_id": page_id,
-        "page_access_token": page_token,
-        "ig_user_id": ig_user_id,
+        "page_id": page["page_id"],
+        "page_access_token": page["page_access_token"],
+        "ig_user_id": page.get("ig_user_id"),
         "obtained_at": int(time.time()),
     }
     _AUTH_DIR.mkdir(parents=True, exist_ok=True)
     STATE_JSON.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
 
-    return {
-        "status": "connected",
-        "page_id": page_id,
-        "ig_user_id": ig_user_id,
-        "ig_linked": ig_user_id is not None,
-        "state_file": str(STATE_JSON),
-    }
+    name = page.get("page_name") or page["page_id"]
+    if page.get("ig_user_id"):
+        return {"status": "connected", "ig_linked": True, "page_id": page["page_id"],
+                "ig_user_id": page["ig_user_id"],
+                "message": f"연결 완료! 페이지 '{name}'와 인스타 계정까지 잡혔어요. "
+                           "이제 인스타·페이스북에 게시할 수 있어요."}
+    return {"status": "page_not_linked", "ig_linked": False, "page_id": page["page_id"],
+            "message": f"거의 다 됐어요! 페이스북 페이지 '{name}'는 찾았는데, "
+                       "인스타가 그 페이지에 아직 연결 안 돼 있어요. (페이스북 게시는 지금도 가능)",
+            "how": LINK_HELP}
+
+
+def preflight() -> dict[str, Any]:
+    """연결 준비 상태를 점검해 '지금 뭘 하면 되는지'를 평이하게 알려준다(초보자용)."""
+    _load_env()
+    state = load_state()
+    if state and state.get("ig_user_id"):
+        return {"ready": True, "step": "connected",
+                "message": "이미 인스타까지 연결돼 있어요. 바로 게시할 수 있어요."}
+    if state and not state.get("ig_user_id"):
+        return {"ready": False, "step": "page_not_linked",
+                "message": "페이스북 페이지는 연결됐는데 인스타가 페이지에 아직 연결 안 돼 있어요.",
+                "how": LINK_HELP}
+    if os.environ.get("META_BROKER_URL"):
+        return {"ready": True, "step": "ready_to_connect", "mode": "one_click",
+                "message": "준비됐어요. '인스타 연결해줘'라고 하면 로그인 창이 떠요. 로그인만 하면 끝이에요."}
+    if os.environ.get("META_APP_ID") and os.environ.get("META_APP_SECRET"):
+        return {"ready": True, "step": "ready_to_connect", "mode": "developer",
+                "message": "준비됐어요(개발자 모드). '인스타 연결해줘'라고 하면 로그인 창이 떠요."}
+    return {"ready": False, "step": "need_setup", "mode": "none",
+            "message": "아직 인스타 연결 준비가 안 됐어요.",
+            "how": "일반 사용자용 원클릭은 .env 에 META_BROKER_URL 한 줄이면 됩니다. "
+                   "지금 직접 테스트라면 docs/META_SETUP.md 로 앱을 한 번 만들어 키를 넣으세요."}
 
 
 def load_state() -> dict[str, Any] | None:
