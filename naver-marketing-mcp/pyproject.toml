@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
-    "mcp>=1.2.0",          # Model Context Protocol Python SDK (FastMCP)
+    "mcp>=1.2,<2",         # MCP Python SDK v1 (FastMCP). 2.x는 MCPServer로 API 변경 — 추후 마이그레이션
     "playwright>=1.48",    # 네이버 블로그 브라우저 자동화
     "keyring>=25.0",       # OS 키체인 크리덴셜 저장 (클라우드 미전송)
     "pyyaml>=6.0",         # policy.yaml 파싱

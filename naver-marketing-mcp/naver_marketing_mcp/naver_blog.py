@@ -1,32 +1,39 @@
-"""네이버 블로그 브라우저 자동화 (Playwright).
+"""네이버 블로그 브라우저 자동화 (Playwright + CDP attach + 쿠키 주입).
 
-네이버는 공식 블로그 게시 API가 없어 브라우저 자동화로 처리한다.
-정지 리스크를 줄이기 위해 **로컬·헤드리스 아님(headed)·세션 재사용·사람 같은 지연**을 기본으로 한다.
+네이버는 Playwright 가 '직접 실행'한 Chrome(--enable-automation)을 자동화로 탐지해 로그인을
+막고 "지원되지 않는 명령줄 플래그" 경고를 띄운다. 그래서 **우리가 평범한 Chrome 을 직접 켜고
+(원격 디버깅 포트만 열고), Playwright 가 CDP 로 attach** 한다 — 네이버 입장에선 일반 크롬.
 
-⚠️ 셀렉터는 모두 이 파일 상단 SELECTORS 에 격리한다. 네이버 UI(SmartEditor ONE)는
-iframe 중첩이 잦고 자주 바뀌므로, 여기만 고치면 되도록 한다. 본문 입력 플로우는
-실제 로그인 세션에서 1회 검증(record → replay)이 필요하다 — 아래 publish() 주석 참조.
+세션 유지: macOS 키체인 암호화 탓에 Chrome 프로파일 디스크 저장이 재실행 때 안 풀리는 이슈가
+있어, **로그인 시 쿠키를 우리 JSON(.auth/naver_state.json)에 저장**하고, 게시/확인 때 그 쿠키를
+진짜 크롬에 **주입**한다(키체인 비의존). JSON 은 .gitignore 로 커밋 차단.
+
+⚠️ 셀렉터는 SELECTORS 에 격리. SmartEditor ONE 본문 입력은 로그인 세션에서 1회 검증 필요.
 """
 
 from __future__ import annotations
 
+import json
 import random
+import subprocess
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any
 
-# db.py 와 동일 규칙: 키트 루트 하위 .auth/ 에 세션 저장 (.gitignore 로 차단됨)
 _KIT_ROOT = Path(__file__).resolve().parents[2]
 _AUTH_DIR = _KIT_ROOT / ".auth"
-SESSION_PATH = _AUTH_DIR / "naver_storage_state.json"
+PROFILE_DIR = _AUTH_DIR / "chrome-profile"        # 임시 Chrome 프로파일
+SESSION_JSON = _AUTH_DIR / "naver_state.json"     # 실제 세션(쿠키) 저장처 — 이게 진짜 소스
+
+CHROME_BIN = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+CDP_PORT = 9222
+CDP_URL = f"http://127.0.0.1:{CDP_PORT}"
 
 LOGIN_URL = "https://nid.naver.com/nidlogin.login"
-BLOG_HOME = "https://blog.naver.com/{blog_id}"
 WRITE_URL = "https://blog.naver.com/{blog_id}?Redirect=Write&"
 
-# ── 셀렉터 격리 구역 (UI 변경 시 여기만 수정) ──────────────────
 SELECTORS = {
-    # SmartEditor ONE 은 mainFrame iframe 안에서 동작
     "editor_iframe": "iframe#mainFrame",
     "title_area": ".se-title-text .se-text-paragraph",
     "body_area": ".se-component.se-text .se-text-paragraph",
@@ -35,7 +42,6 @@ SELECTORS = {
     "tag_input": "input#tag-input, .tag_input__rvUB5",
 }
 
-# 사람 같은 타이핑 지연(초) 범위
 _TYPE_DELAY = (0.03, 0.12)
 
 
@@ -43,41 +49,144 @@ def _human_pause(a: float = 0.4, b: float = 1.2) -> None:
     time.sleep(random.uniform(a, b))
 
 
+# ── 세션(쿠키) 저장/로드 ──────────────────────────────────────
 def session_exists() -> bool:
-    return SESSION_PATH.exists()
+    return SESSION_JSON.exists()
 
 
-def save_session(blog_id: str, timeout_sec: int = 180) -> str:
-    """헤드풀 브라우저로 네이버 로그인 창을 띄우고, 사용자가 직접 로그인하면
-    세션(storage_state)을 저장한다. 비밀번호는 저장하지 않는다(세션 쿠키만).
+def _save_state(ctx: Any) -> None:
+    _AUTH_DIR.mkdir(parents=True, exist_ok=True)
+    ctx.storage_state(path=str(SESSION_JSON))
 
-    보안·정지리스크 상 자동 로그인 타이핑은 하지 않고 **사용자 수동 로그인**을 기다린다.
-    (네이버는 자동 입력 로그인에 캡차·2단계를 자주 요구한다.)
+
+def _apply_saved_cookies(ctx: Any) -> None:
+    """저장된 쿠키를 현재 컨텍스트에 주입."""
+    if not SESSION_JSON.exists():
+        return
+    state = json.loads(SESSION_JSON.read_text(encoding="utf-8"))
+    cookies = state.get("cookies", [])
+    if cookies:
+        ctx.add_cookies(cookies)
+
+
+def _is_logged_in(ctx: Any) -> bool:
+    """네이버 로그인 쿠키(NID_AUT) 존재로 로그인 여부 판정."""
+    try:
+        return any(c.get("name") == "NID_AUT" for c in ctx.cookies())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _detect_blog_id(ctx: Any) -> str:
+    try:
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page.goto("https://blog.naver.com/MyBlog.naver", wait_until="domcontentloaded")
+        time.sleep(2.0)
+        tail = page.url.split("blog.naver.com/")[-1]
+        return tail.split("?")[0].split("/")[0].strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+# ── Chrome 실행/종료 ─────────────────────────────────────────
+def _wait_for_cdp(timeout: float = 30.0) -> None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen(f"{CDP_URL}/json/version", timeout=1)
+            return
+        except Exception:  # noqa: BLE001
+            time.sleep(0.5)
+    raise RuntimeError("Chrome 원격 디버깅 포트(CDP) 준비 실패.")
+
+
+def launch_real_chrome(start_url: str = "") -> subprocess.Popen:
+    """평범한 Chrome 을 원격 디버깅 포트와 함께 직접 실행(자동화 플래그 없음)."""
+    _AUTH_DIR.mkdir(parents=True, exist_ok=True)
+    args = [
+        CHROME_BIN,
+        f"--remote-debugging-port={CDP_PORT}",
+        f"--user-data-dir={PROFILE_DIR}",
+        "--no-first-run",
+        "--no-default-browser-check",
+    ]
+    if start_url:
+        args.append(start_url)
+    proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _wait_for_cdp()
+    return proc
+
+
+def _stop_chrome(proc: subprocess.Popen) -> None:
+    try:
+        proc.terminate()
+        proc.wait(timeout=15)
+    except Exception:  # noqa: BLE001
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+# ── 로그인 / 세션 확인 / 게시 ────────────────────────────────
+def login(timeout_sec: int = 300) -> dict[str, Any]:
+    """평범한 Chrome 로그인 창을 띄우고, 로그인되면 쿠키를 JSON 에 저장한다.
+    비밀번호는 저장하지 않는다. 로그인 후 블로그 아이디를 자동 감지해 반환.
     """
     from playwright.sync_api import sync_playwright
 
-    _AUTH_DIR.mkdir(parents=True, exist_ok=True)
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        ctx = browser.new_context()
-        page = ctx.new_page()
-        page.goto(LOGIN_URL)
+    proc = launch_real_chrome(LOGIN_URL)
+    blog_id = ""
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.connect_over_cdp(CDP_URL)
+            ctx = browser.contexts[0]
 
-        # 로그인 완료(블로그 홈 접근 가능) 될 때까지 대기
-        deadline = time.time() + timeout_sec
-        while time.time() < deadline:
-            if "nid.naver.com" not in page.url:
-                break
-            time.sleep(1.5)
-        else:
+            deadline = time.time() + timeout_sec
+            while time.time() < deadline:
+                if _is_logged_in(ctx):
+                    break
+                time.sleep(1.5)
+            else:
+                raise TimeoutError("제한 시간 안에 로그인이 완료되지 않았습니다.")
+
+            blog_id = _detect_blog_id(ctx)
+            _save_state(ctx)  # 쿠키를 JSON 으로 저장 (진짜 소스)
             browser.close()
-            raise TimeoutError(
-                "제한 시간 안에 로그인이 완료되지 않았습니다. 다시 시도해 주세요."
-            )
+    finally:
+        _stop_chrome(proc)
 
-        ctx.storage_state(path=str(SESSION_PATH))
-        browser.close()
-    return f"네이버 세션 저장 완료: {SESSION_PATH.name} (blog_id={blog_id})"
+    return {"status": "logged_in", "blog_id": blog_id, "session_file": str(SESSION_JSON)}
+
+
+def save_session(blog_id: str = "", timeout_sec: int = 300) -> str:
+    """server.connect_naver 호환 래퍼."""
+    result = login(timeout_sec=timeout_sec)
+    detected = result.get("blog_id") or blog_id or "(미지정)"
+    return f"네이버 세션 저장 완료. blog_id={detected}"
+
+
+def check_session() -> dict[str, Any]:
+    """저장된 쿠키를 주입해 현재 로그인 상태인지 빠르게 확인(대기 없음)."""
+    from playwright.sync_api import sync_playwright
+
+    if not session_exists():
+        return {"status": "no_session"}
+    proc = launch_real_chrome()
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.connect_over_cdp(CDP_URL)
+            ctx = browser.contexts[0]
+            _apply_saved_cookies(ctx)
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            page.goto("https://www.naver.com", wait_until="domcontentloaded")
+            time.sleep(1.5)
+            logged_in = _is_logged_in(ctx)
+            blog_id = _detect_blog_id(ctx) if logged_in else ""
+            browser.close()
+    finally:
+        _stop_chrome(proc)
+    return {"status": "logged_in" if logged_in else "logged_out", "blog_id": blog_id}
 
 
 def publish(
@@ -86,60 +195,44 @@ def publish(
     body_markdown: str,
     tags: list[str] | None = None,
     image_paths: list[str] | None = None,
-    headless: bool = False,
+    headless: bool = False,  # CDP attach 방식에선 실제 창을 띄운다(무시됨)
 ) -> dict[str, Any]:
-    """저장된 세션으로 블로그 글을 게시하고 URL 을 반환한다.
+    """저장된 쿠키를 주입한 진짜 크롬으로 글쓰기 페이지를 열고 게시한다.
 
-    실제 SmartEditor DOM 상호작용은 로그인 세션에서 1회 검증이 필요하다:
-      1) `playwright codegen https://blog.naver.com/{id}?Redirect=Write` 로 실제 클릭/입력을 녹화
-      2) 녹화된 셀렉터로 위 SELECTORS 를 확정
-      3) 아래 TODO 블록을 그 셀렉터로 채운다
-    검증 전까지는 글쓰기 페이지까지 열고 초안 데이터를 반환해 사람이 확인/게시하도록 한다.
+    실제 SmartEditor DOM 상호작용은 로그인 세션에서 1회 검증 후 활성화(아래 TODO).
+    검증 전까지는 글쓰기 페이지를 열고 초안/스크린샷을 반환한다.
     """
     if not session_exists():
-        raise RuntimeError(
-            "네이버 세션이 없습니다. 먼저 connect_naver 로 로그인해 주세요."
-        )
+        raise RuntimeError("네이버 세션이 없습니다. 먼저 connect_naver 로 로그인해 주세요.")
 
     from playwright.sync_api import sync_playwright
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless)
-        ctx = browser.new_context(storage_state=str(SESSION_PATH))
-        page = ctx.new_page()
-        page.goto(WRITE_URL.format(blog_id=blog_id))
-        _human_pause(1.0, 2.5)
+    proc = launch_real_chrome()
+    shot = _AUTH_DIR / "last_write_screen.png"
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.connect_over_cdp(CDP_URL)
+            ctx = browser.contexts[0]
+            _apply_saved_cookies(ctx)
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            page.goto(WRITE_URL.format(blog_id=blog_id), wait_until="domcontentloaded")
+            _human_pause(1.0, 2.5)
 
-        frame = page.frame_locator(SELECTORS["editor_iframe"])
+            frame = page.frame_locator(SELECTORS["editor_iframe"])  # noqa: F841 — 검증 후 사용
 
-        # TODO(검증필요): 아래는 SmartEditor ONE 기준 초안. codegen 으로 셀렉터 확정 후 활성화.
-        # frame.locator(SELECTORS["title_area"]).click()
-        # page.keyboard.type(title, delay=random.uniform(*_TYPE_DELAY) * 1000)
-        # _human_pause()
-        # frame.locator(SELECTORS["body_area"]).click()
-        # for line in md_to_lines(body_markdown):
-        #     page.keyboard.type(line, delay=random.uniform(*_TYPE_DELAY) * 1000)
-        #     page.keyboard.press("Enter")
-        # if image_paths: _insert_images(page, frame, image_paths)
-        # if tags: _fill_tags(frame, tags)
-        # frame.locator(SELECTORS["publish_open_btn"]).click(); _human_pause()
-        # frame.locator(SELECTORS["publish_confirm_btn"]).click()
-        # post_url = _wait_for_post_url(page)
+            # TODO(검증필요): SmartEditor ONE 셀렉터 확정 후 제목/본문/이미지/태그/발행 활성화.
 
-        # 검증 전 안전 폴백: 글쓰기 화면까지 열어두고 스크린샷 저장, 사람이 확인.
-        shot = _AUTH_DIR / "last_write_screen.png"
-        try:
-            page.screenshot(path=str(shot))
-        except Exception:
-            pass
-        browser.close()
+            try:
+                page.screenshot(path=str(shot))
+            except Exception:  # noqa: BLE001
+                pass
+            browser.close()
+    finally:
+        _stop_chrome(proc)
 
     return {
         "status": "needs_verification",
-        "message": (
-            "글쓰기 화면까지 열었습니다. SmartEditor 셀렉터 검증(codegen) 후 자동 입력이 "
-            "활성화됩니다. 그 전까지는 초안을 사람이 붙여넣어 게시하세요."
-        ),
+        "message": "글쓰기 화면까지 열었습니다. SmartEditor 셀렉터 검증 후 자동 입력이 활성화됩니다.",
         "screenshot": str(shot),
         "draft": {"title": title, "body_markdown": body_markdown, "tags": tags or []},
     }
