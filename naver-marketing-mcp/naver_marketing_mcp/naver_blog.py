@@ -38,6 +38,8 @@ SELECTORS = {
     "editor_iframe": "iframe#mainFrame",
     "title_area": ".se-section-documentTitle .se-text-paragraph",
     "body_area": ".se-section-text .se-text-paragraph",
+    "photo_btn": "button.se-image-toolbar-button",  # 로컬 사진 추가 → OS 파일창
+    "image_component": ".se-image",                 # 업로드된 이미지 컴포넌트
     "publish_open_btn": "button.publish_btn__m9KHH",
     "private_radio": 'label[for="open_private"]',
     "publish_confirm_btn": "button.confirm_btn__WEaBq",
@@ -190,6 +192,26 @@ def check_session() -> dict[str, Any]:
     return {"status": "logged_in" if logged_in else "logged_out", "blog_id": blog_id}
 
 
+def _insert_images(page: Any, frame: Any, image_paths: list[str]) -> int:
+    """본문 커서 위치에 로컬 이미지들을 삽입한다. 삽입된 이미지 컴포넌트 수 반환.
+
+    '사진' 버튼 클릭 → OS 파일 선택창을 Playwright 가 가로채 파일을 넣는다(한 번에 여러 장).
+    업로드 완료(이미지 컴포넌트 등장)를 기다린다.
+    """
+    before = frame.locator(SELECTORS["image_component"]).count()
+    with page.expect_file_chooser(timeout=15000) as fc:
+        frame.locator(SELECTORS["photo_btn"]).first.click()
+    fc.value.set_files(image_paths)
+    # 업로드 완료 대기: 이미지 컴포넌트 수가 늘 때까지
+    deadline = time.time() + 40
+    while time.time() < deadline:
+        if frame.locator(SELECTORS["image_component"]).count() > before:
+            break
+        time.sleep(1.0)
+    time.sleep(3.0)  # 마지막 장 업로드 여유
+    return frame.locator(SELECTORS["image_component"]).count() - before
+
+
 def _type_text(page: Any, text: str) -> None:
     """포커스된 contenteditable 에 사람 같은 지연으로 타이핑(여러 줄 지원)."""
     lines = text.split("\n")
@@ -249,6 +271,12 @@ def publish(
             _type_text(page, body_markdown)
             _human_pause(0.6, 1.2)
 
+            # 이미지 삽입 (본문 커서 뒤)
+            inserted_images = 0
+            if image_paths:
+                inserted_images = _insert_images(page, frame, image_paths)
+                _human_pause(0.6, 1.2)
+
             # 발행 설정 패널 열기
             frame.locator(SELECTORS["publish_open_btn"]).first.click()
             time.sleep(2.0)
@@ -291,5 +319,6 @@ def publish(
         "status": "published",
         "private": private,
         "post_url": post_url,
+        "images_inserted": inserted_images,
         "screenshot": str(shot),
     }
