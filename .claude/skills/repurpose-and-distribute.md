@@ -11,9 +11,11 @@ description: 네이버 블로그에 쓴 글을 여러 SNS(인스타·링크드�
 ## 사용하는 도구
 - **브랜드 보이스**: `brand_voice.md` (없으면 setup-wizard 로 먼저 생성) — 모든 카피는 이 말투로.
 - **채널 규격**: naver-marketing MCP `channel_spec` / `validate_channel_post` / `assemble_channel_caption` — 길이·해시태그·이미지 규칙을 코드로 강제.
-- **이미지 생성**: Higgsfield MCP (채널별 비율 다름 — `channel_spec` 의 image_aspect 참고).
-- **배포**: Blotato MCP (인스타·링크드인·X·스레드·페북 등 공식 API). *사장님 Blotato 계정 연결 필요.*
-- **네이버**: naver-marketing MCP (소스 글이거나, 네이버에도 함께 올릴 때).
+- **이미지 생성**: Higgsfield MCP (채널별 비율 다름 — `channel_spec` 의 image_aspect 참고). 인스타는 **공개 URL** 필요.
+- **배포(무료·직접)**: naver-marketing MCP —
+  - 인스타그램 `instagram_publish` / 페이스북 `facebook_publish` (Meta 무료 Graph API, `connect_meta` 로 사전 연결)
+  - 네이버 블로그 `naver_blog_publish`
+  - *Blotato(유료) 없이 직접 게시. 다른 플랫폼은 추후 추가.*
 
 ## 절차
 
@@ -37,10 +39,10 @@ description: 네이버 블로그에 쓴 글을 여러 SNS(인스타·링크드�
 5. **미리보기 → 승인 (필수 게이트)** — 채널별 최종 캡션·이미지를 사장님께 **한 번에 미리보기**로 보여주고
    승인받는다. 승인 전 배포 금지.
 
-6. **배포** — 승인되면 Blotato MCP 로 각 채널에 게시. 네이버에도 올릴 경우 naver-marketing 으로.
-   결과(채널별 게시 URL/상태)를 요약 보고한다.
+6. **배포** — 승인되면 `instagram_publish`(approve=True)·`facebook_publish`(approve=True)·
+   `naver_blog_publish` 로 각 채널에 게시. 결과(채널별 게시 URL/상태)를 요약 보고한다.
 
 ## 안전 규칙
 - 사실·수치는 소스 글과 일치시킨다(과장·왜곡 금지).
 - 배포 전 항상 미리보기·승인. 완전 자동은 사장님이 명시적으로 요청할 때만.
-- Blotato 미연결 시: 재가공·검증까지 하고, "Blotato 연결 후 배포 가능"으로 안내(connectors.md).
+- Meta(인스타·페북) 미연결 시: 재가공·검증까지 하고, "connect_meta 로 연결 후 게시 가능"으로 안내(docs/META_SETUP.md).

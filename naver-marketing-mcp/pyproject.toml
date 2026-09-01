@@ -10,6 +10,7 @@ dependencies = [
     "playwright>=1.48",    # 네이버 블로그 브라우저 자동화
     "keyring>=25.0",       # OS 키체인 크리덴셜 저장 (클라우드 미전송)
     "pyyaml>=6.0",         # policy.yaml 파싱
+    "requests>=2.31",      # Meta Graph API (인스타·페북)
 ]
 
 [project.scripts]

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from . import channels, naver_blog, powerlink
+from . import channels, facebook, instagram, meta_auth, naver_blog, powerlink
 from .db import record_post
 from .policy import load_policy
 from .safety import DailyCapExceeded, check_daily_cap, human_delay
@@ -135,7 +135,65 @@ def collect_performance(days: int = 7) -> dict:
 
 
 # ────────────────────────────────────────────────────────────
-# 멀티 SNS 재가공: 채널 규격·검증 (배포는 Blotato MCP 담당)
+# Meta(인스타·페북) 무료 게시 — Blotato 없이 직접
+# ────────────────────────────────────────────────────────────
+@mcp.tool()
+def connect_meta() -> dict:
+    """인스타그램·페이스북 연결(OAuth). 브라우저 창이 뜨면 로그인·동의만 하면 되고,
+    토큰 발급·장기토큰 변환·IG 계정 조회는 자동으로 처리해 로컬에 저장한다.
+    사전: docs/META_SETUP.md 로 앱 1회 생성 후 .env 에 META_APP_ID/META_APP_SECRET 설정.
+    """
+    return meta_auth.connect()
+
+
+@mcp.tool()
+def instagram_publish(image_urls: list[str], caption: str, approve: bool = False) -> dict:
+    """인스타그램 게시(무료 Graph API). image_urls 는 공개 URL(예: Higgsfield 생성물).
+    approve=False 면 게시하지 않고 미리보기만 반환(승인 게이트).
+    """
+    if not approve:
+        return {"status": "draft", "platform": "instagram",
+                "preview": {"caption": caption, "image_count": len(image_urls)},
+                "next": "approve=True 로 다시 호출하면 게시됩니다."}
+    policy = load_policy()
+    try:
+        check_daily_cap(policy, "instagram")
+    except DailyCapExceeded as e:
+        return {"status": "blocked", "reason": str(e)}
+    try:
+        result = instagram.publish(image_urls, caption)
+    except Exception as e:  # noqa: BLE001
+        record_post("instagram", status="failed", title=caption[:40], error=str(e))
+        return {"status": "failed", "error": str(e)}
+    record_post("instagram", status="published", title=caption[:40],
+                post_url=result.get("post_url"))
+    return result
+
+
+@mcp.tool()
+def facebook_publish(image_urls: list[str], caption: str, approve: bool = False) -> dict:
+    """페이스북 페이지 게시(무료 Graph API). approve=False 면 미리보기만."""
+    if not approve:
+        return {"status": "draft", "platform": "facebook",
+                "preview": {"caption": caption, "image_count": len(image_urls)},
+                "next": "approve=True 로 다시 호출하면 게시됩니다."}
+    policy = load_policy()
+    try:
+        check_daily_cap(policy, "facebook")
+    except DailyCapExceeded as e:
+        return {"status": "blocked", "reason": str(e)}
+    try:
+        result = facebook.publish(image_urls, caption)
+    except Exception as e:  # noqa: BLE001
+        record_post("facebook", status="failed", title=caption[:40], error=str(e))
+        return {"status": "failed", "error": str(e)}
+    record_post("facebook", status="published", title=caption[:40],
+                post_url=result.get("post_url"))
+    return result
+
+
+# ────────────────────────────────────────────────────────────
+# 멀티 SNS 재가공: 채널 규격·검증
 # ────────────────────────────────────────────────────────────
 @mcp.tool()
 def channel_spec(channel: str | None = None) -> dict:
