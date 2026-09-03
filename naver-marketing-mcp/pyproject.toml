@@ -11,6 +11,7 @@ dependencies = [
     "keyring>=25.0",       # OS 키체인 크리덴셜 저장 (클라우드 미전송)
     "pyyaml>=6.0",         # policy.yaml 파싱
     "requests>=2.31",      # Meta Graph API (인스타·페북)
+    "pillow>=10.0",        # 인스타 이미지 비율 변환(4:5 등)
 ]
 
 [project.scripts]

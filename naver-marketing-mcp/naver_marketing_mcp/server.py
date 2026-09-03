@@ -9,7 +9,7 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 from . import (
-    channels, db, facebook, instagram, meta_auth, naver_blog, powerlink,
+    channels, db, facebook, images, instagram, meta_auth, naver_blog, powerlink,
     runner, scheduler, threads,
 )
 from .db import record_post
@@ -234,9 +234,21 @@ def set_instagram_token(access_token: str) -> dict:
 
 
 @mcp.tool()
+def prepare_images(paths: list[str], aspect: str = "4:5") -> dict:
+    """로컬 이미지를 인스타 규격(비율)으로 변환하고 공개 URL 로 호스팅한다.
+    폰 스크린샷처럼 비율이 안 맞거나 로컬 파일일 때 사용. 이미 http URL 이면 그대로 통과.
+    aspect: 4:5(기본)·1:1·1.91:1
+    """
+    try:
+        return {"urls": images.prep_for_instagram(paths, aspect)}
+    except Exception as e:  # noqa: BLE001
+        return {"status": "error", "error": str(e)}
+
+
+@mcp.tool()
 def instagram_publish(image_urls: list[str], caption: str, approve: bool = False) -> dict:
-    """인스타그램 게시(무료 Graph API). image_urls 는 공개 URL(예: Higgsfield 생성물).
-    approve=False 면 게시하지 않고 미리보기만 반환(승인 게이트).
+    """인스타그램 게시(무료 Graph API). image_urls 는 공개 URL 또는 로컬 경로.
+    로컬 경로면 자동으로 4:5 변환·호스팅한다. approve=False 면 미리보기만(승인 게이트).
     """
     if not approve:
         return {"status": "draft", "platform": "instagram",
@@ -248,6 +260,9 @@ def instagram_publish(image_urls: list[str], caption: str, approve: bool = False
     except DailyCapExceeded as e:
         return {"status": "blocked", "reason": str(e)}
     try:
+        # 로컬 경로가 섞여 있으면 4:5 변환·호스팅 후 게시
+        if any(not images.is_url(u) for u in image_urls):
+            image_urls = images.prep_for_instagram(image_urls, "4:5")
         result = instagram.publish(image_urls, caption)
     except Exception as e:  # noqa: BLE001
         record_post("instagram", status="failed", title=caption[:40], error=str(e))
