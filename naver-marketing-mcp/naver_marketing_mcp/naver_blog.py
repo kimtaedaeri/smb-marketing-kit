@@ -229,6 +229,31 @@ def _add_tags(page: Any, frame: Any, tags: list[str]) -> int:
     return added
 
 
+def format_draft(
+    title: str,
+    body_markdown: str,
+    tags: list[str] | None = None,
+    image_paths: list[str] | None = None,
+) -> dict[str, Any]:
+    """자동 발행 대신 '붙여넣기용 초안'을 만든다(수동 어시스트 · 정지 리스크 회피 폴백).
+
+    브라우저를 건드리지 않는다. 사장님이 네이버 글쓰기에 직접 붙여넣으면 된다.
+    """
+    tag_line = " ".join(f"#{t.lstrip('#').strip()}" for t in (tags or []) if t.strip())
+    parts = [f"[제목]\n{title}", f"[본문]\n{body_markdown.strip()}"]
+    if tag_line:
+        parts.append(f"[태그]\n{tag_line}")
+    copy_text = "\n\n".join(parts)
+    return {
+        "status": "draft",
+        "mode": "assist",
+        "copy_text": copy_text,
+        "image_paths": image_paths or [],
+        "how": "네이버 블로그 글쓰기에 위 [제목]/[본문]을 붙여넣고, 이미지는 직접 첨부한 뒤 발행하세요. "
+               "자동 발행보다 안전합니다(계정 보호).",
+    }
+
+
 def _type_text(page: Any, text: str) -> None:
     """포커스된 contenteditable 에 사람 같은 지연으로 타이핑(여러 줄 지원)."""
     lines = text.split("\n")

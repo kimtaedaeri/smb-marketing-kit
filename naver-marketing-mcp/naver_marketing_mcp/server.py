@@ -66,6 +66,11 @@ def naver_blog_publish(
         approve: True 여야 실제 게시. 기본 False(초안만).
     """
     policy = load_policy()
+
+    # 수동 어시스트 모드(policy naver.mode=assist): 자동 발행 대신 붙여넣기용 초안 반환(정지 리스크 회피)
+    if policy.get("naver", {}).get("mode") == "assist":
+        return naver_blog.format_draft(title, body_markdown, tags, image_paths)
+
     preview = {
         "title": title,
         "body_markdown": body_markdown,
@@ -116,6 +121,19 @@ def naver_blog_publish(
 # ────────────────────────────────────────────────────────────
 # 파워링크 입찰 (퍼포먼스)
 # ────────────────────────────────────────────────────────────
+@mcp.tool()
+def naver_blog_draft(
+    title: str,
+    body_markdown: str,
+    tags: list[str] | None = None,
+    image_paths: list[str] | None = None,
+) -> dict:
+    """자동 발행 대신 '붙여넣기용 초안'을 만든다(수동 어시스트). 브라우저를 건드리지 않아 가장 안전.
+    계정 정지 리스크가 부담될 때, 또는 자동화가 막혔을 때 폴백으로 사용.
+    """
+    return naver_blog.format_draft(title, body_markdown, tags, image_paths)
+
+
 @mcp.tool()
 def powerlink_bidding(dry_run: bool = True) -> dict:
     """네이버 파워링크 키워드 입찰을 1회 실행한다(naver-powerlink-bidding 통합).

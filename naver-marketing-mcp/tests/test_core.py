@@ -95,6 +95,14 @@ def test_summary(tmp_db: Path) -> None:
     assert s["by_platform"]["naver_blog"]["published"] == 1
 
 
+def test_naver_draft(_tmp: Path) -> None:
+    from naver_marketing_mcp.naver_blog import format_draft
+    d = format_draft("제목", "본문 내용", ["a", "#b"], ["/x.png"])
+    assert d["status"] == "draft" and d["mode"] == "assist"
+    assert "[제목]" in d["copy_text"] and "#a #b" in d["copy_text"]
+    assert d["image_paths"] == ["/x.png"]
+
+
 def _run() -> None:
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

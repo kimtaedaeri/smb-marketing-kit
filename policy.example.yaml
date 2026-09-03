@@ -8,6 +8,7 @@ brand:
 # ── 네이버 계정 ──
 naver:
   blog_id: "your_blog_id"    # blog.naver.com/<이 부분>
+  mode: "auto"               # auto = 자동 발행 / assist = 붙여넣기용 초안만(정지 리스크 회피, 가장 안전)
 
 # ── 오가닉 콘텐츠 게시 ──
 content:
