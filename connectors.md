@@ -25,20 +25,13 @@
 
 ## 3. naver-marketing-mcp 설치 (네이버 갭)
 
-로컬에서 실행합니다. [`naver-marketing-mcp/README.md`](naver-marketing-mcp/README.md) 참고.
-
+**한 줄 설치(권장, uvx):** `uv` 설치 후(`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 ```bash
-cd naver-marketing-mcp
-python -m venv .venv && source .venv/bin/activate
-pip install -e .
-playwright install chromium
+claude mcp add smb-marketing -- uvx smb-marketing-naver-mcp
 ```
+클론·venv 불필요. **Google Chrome** 설치만 필요(네이버 자동화용).
 
-Claude Desktop/Code 에 로컬 MCP로 등록:
-
-```bash
-claude mcp add naver-marketing -- python -m naver_marketing_mcp
-```
+개발자용 소스 설치는 [`naver-marketing-mcp/README.md`](naver-marketing-mcp/README.md) 참고.
 
 ## 로그인 방식 (플랫폼마다 다름 — 하이브리드)
 

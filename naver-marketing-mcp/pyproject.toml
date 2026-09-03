@@ -1,21 +1,37 @@
 [project]
-name = "naver-marketing-mcp"
-version = "0.0.1"
-description = "네이버 블로그 게시 · 파워링크 입찰을 Claude에서 호출하는 로컬 MCP (한국 갭 커버)"
+name = "smb-marketing-naver-mcp"
+version = "0.1.0"
+description = "소상공인용 마케팅 자동화 MCP — 네이버 블로그·인스타·스레드 게시, 채널별 재가공, 예약·리포트를 Claude에서 대화로."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
+authors = [{ name = "kimtaedaeri" }]
+keywords = ["mcp", "marketing", "naver", "instagram", "threads", "automation", "claude", "smb"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business",
+    "Natural Language :: Korean",
+]
 dependencies = [
-    "mcp>=1.2,<2",         # MCP Python SDK v1 (FastMCP). 2.x는 MCPServer로 API 변경 — 추후 마이그레이션
-    "playwright>=1.48",    # 네이버 블로그 브라우저 자동화
-    "keyring>=25.0",       # OS 키체인 크리덴셜 저장 (클라우드 미전송)
-    "pyyaml>=6.0",         # policy.yaml 파싱
-    "requests>=2.31",      # Meta Graph API (인스타·페북)
-    "pillow>=10.0",        # 인스타 이미지 비율 변환(4:5 등)
+    "mcp>=1.2,<2",         # MCP Python SDK v1 (FastMCP)
+    "playwright>=1.48",    # 네이버 브라우저 자동화(시스템 Chrome 에 CDP attach — 크로미움 다운로드 불필요)
+    "pyyaml>=6.0",         # policy.yaml
+    "requests>=2.31",      # Meta Graph API (인스타·스레드·페북)
+    "pillow>=10.0",        # 인스타 이미지 비율 변환
 ]
 
+[project.urls]
+Homepage = "https://github.com/kimtaedaeri/smb-marketing-kit"
+Repository = "https://github.com/kimtaedaeri/smb-marketing-kit"
+
+# uvx smb-marketing-naver-mcp 로 바로 실행되도록 스크립트명 = 패키지명
 [project.scripts]
-naver-marketing-mcp = "naver_marketing_mcp.server:main"
+smb-marketing-naver-mcp = "naver_marketing_mcp.server:main"
 
 [build-system]
 requires = ["hatchling"]

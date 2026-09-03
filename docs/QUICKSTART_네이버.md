@@ -6,15 +6,17 @@
 - [Claude Desktop](https://claude.ai/download) 또는 Claude Code
 - 네이버 블로그 (아이디만 있으면 됨 — 사업자 서류·전환 불필요)
 
-## 1단계 — 설치
+## 1단계 — 설치 (한 줄)
+`uv` 가 없으면 먼저 설치(1회): `curl -LsSf https://astral.sh/uv/install.sh | sh`
+그다음 Claude에 등록:
 ```bash
-cd naver-marketing-mcp
-python -m venv .venv && source .venv/bin/activate
-pip install -e .
-playwright install chromium
-claude mcp add naver-marketing -- python -m naver_marketing_mcp
+claude mcp add smb-marketing -- uvx smb-marketing-naver-mcp
 ```
-그리고 `policy.example.yaml` 을 `policy.yaml` 로 복사해 `naver.blog_id` 를 채웁니다.
+- 클론·venv 없이 uvx가 알아서 설치·실행합니다.
+- **Google Chrome** 이 설치돼 있어야 합니다(네이버 자동화용). Playwright 크로미움 다운로드는 불필요.
+- `policy.example.yaml` 을 `policy.yaml` 로 복사해 `naver.blog_id` 를 채웁니다.
+
+> 개발자라면 소스로도 가능: `git clone … && cd naver-marketing-mcp && pip install -e .`
 
 ## 2단계 — 브랜드 보이스 (제일 중요)
 Claude에게: `브랜드 보이스 인터뷰 시작해줘`

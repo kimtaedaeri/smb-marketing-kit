@@ -33,3 +33,7 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+
+# 빌드 산출물
+dist/
+build/

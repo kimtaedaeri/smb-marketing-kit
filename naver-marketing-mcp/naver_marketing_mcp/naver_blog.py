@@ -14,7 +14,9 @@
 from __future__ import annotations
 
 import json
+import platform
 import random
+import shutil
 import subprocess
 import time
 import urllib.request
@@ -26,7 +28,6 @@ _AUTH_DIR = _KIT_ROOT / ".auth"
 PROFILE_DIR = _AUTH_DIR / "chrome-profile"        # 임시 Chrome 프로파일
 SESSION_JSON = _AUTH_DIR / "naver_state.json"     # 실제 세션(쿠키) 저장처 — 이게 진짜 소스
 
-CHROME_BIN = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 CDP_PORT = 9222
 CDP_URL = f"http://127.0.0.1:{CDP_PORT}"
 
@@ -51,6 +52,31 @@ _TYPE_DELAY = (0.03, 0.12)
 
 def _human_pause(a: float = 0.4, b: float = 1.2) -> None:
     time.sleep(random.uniform(a, b))
+
+
+def find_chrome() -> str:
+    """OS별로 설치된 Google Chrome 실행파일을 찾는다(네이버 자동화용)."""
+    system = platform.system()
+    if system == "Darwin":
+        cands = ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
+    elif system == "Windows":
+        cands = [r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                 r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"]
+    else:
+        cands = ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
+                 "/opt/google/chrome/chrome"]
+    for c in cands:
+        if Path(c).exists():
+            return c
+    for name in ("google-chrome", "google-chrome-stable", "chrome",
+                 "chromium", "chromium-browser"):
+        p = shutil.which(name)
+        if p:
+            return p
+    raise RuntimeError(
+        "Google Chrome 를 찾을 수 없습니다. 네이버 자동화에는 Chrome 이 필요합니다 — "
+        "https://www.google.com/chrome 에서 설치 후 다시 시도해 주세요."
+    )
 
 
 # ── 세션(쿠키) 저장/로드 ──────────────────────────────────────
@@ -108,7 +134,7 @@ def launch_real_chrome(start_url: str = "") -> subprocess.Popen:
     """평범한 Chrome 을 원격 디버깅 포트와 함께 직접 실행(자동화 플래그 없음)."""
     _AUTH_DIR.mkdir(parents=True, exist_ok=True)
     args = [
-        CHROME_BIN,
+        find_chrome(),
         f"--remote-debugging-port={CDP_PORT}",
         f"--user-data-dir={PROFILE_DIR}",
         "--no-first-run",
