@@ -16,13 +16,29 @@ class DailyCapExceeded(Exception):
     """오늘 해당 플랫폼 게시 상한을 초과했을 때."""
 
 
-def check_daily_cap(policy: dict[str, Any], platform: str) -> None:
-    """policy 의 content.daily_cap[platform] 과 오늘 published 건수를 비교.
+# 플랫폼 절대 상한(계정 보호·ToS). policy 설정과 무관하게 이 이상은 막는다.
+#  - instagram/facebook: Meta Graph API 콘텐츠 게시 한도(~50/24h)
+#  - threads: 250/24h
+#  - naver_blog: 저품질/정지 리스크가 커 보수적으로 낮게(하루 소량 권장)
+PLATFORM_HARD_CAP = {
+    "instagram": 50,
+    "facebook": 50,
+    "threads": 250,
+    "naver_blog": 5,
+}
 
-    상한 도달 시 DailyCapExceeded 를 던져 게시를 막는다.
-    상한 미설정(None)이면 통과하되, 설정을 권장한다.
-    """
-    cap = policy.get("content", {}).get("daily_cap", {}).get(platform)
+
+def effective_cap(policy: dict[str, Any], platform: str) -> int | None:
+    """policy 상한과 플랫폼 하드 캡 중 더 낮은 값. 둘 다 없으면 None."""
+    policy_cap = policy.get("content", {}).get("daily_cap", {}).get(platform)
+    hard = PLATFORM_HARD_CAP.get(platform)
+    caps = [c for c in (policy_cap, hard) if c is not None]
+    return min(caps) if caps else None
+
+
+def check_daily_cap(policy: dict[str, Any], platform: str) -> None:
+    """오늘 published 건수를 유효 상한(policy ∧ 플랫폼 하드캡)과 비교. 도달 시 차단."""
+    cap = effective_cap(policy, platform)
     if cap is None:
         return
     today = count_posts_today(platform)

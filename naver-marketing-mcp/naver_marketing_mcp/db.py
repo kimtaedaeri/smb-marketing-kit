@@ -55,6 +55,27 @@ def count_posts_today(platform: str, on: str | None = None) -> int:
     return int(n)
 
 
+def summary(days: int = 7) -> dict:
+    """최근 N일 발행 요약(플랫폼×상태 건수). 성과 지표(도달·참여)는 계정 연결 후 확장."""
+    from datetime import date, timedelta
+
+    since = (date.today() - timedelta(days=days - 1)).isoformat()
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT platform, status, COUNT(*) FROM post_log WHERE posted_on >= ? "
+            "GROUP BY platform, status",
+            (since,),
+        ).fetchall()
+    by_platform: dict[str, dict[str, int]] = {}
+    total_published = 0
+    for platform, status, n in rows:
+        by_platform.setdefault(platform, {})[status] = int(n)
+        if status == "published":
+            total_published += int(n)
+    return {"since": since, "days": days,
+            "total_published": total_published, "by_platform": by_platform}
+
+
 def record_post(
     platform: str,
     status: str,

@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from . import channels, facebook, instagram, meta_auth, naver_blog, powerlink
+from . import (
+    channels, db, facebook, instagram, meta_auth, naver_blog, powerlink,
+    runner, scheduler,
+)
 from .db import record_post
 from .policy import load_policy
 from .safety import DailyCapExceeded, check_daily_cap, human_delay
@@ -130,8 +133,52 @@ def powerlink_bidding(dry_run: bool = True) -> dict:
 # ────────────────────────────────────────────────────────────
 @mcp.tool()
 def collect_performance(days: int = 7) -> dict:
-    """최근 N일 네이버 블로그·파워링크 성과를 수집한다. (P1 예정)"""
-    return {"status": "planned", "message": "collect_performance 는 P1 에서 구현됩니다."}
+    """최근 N일 네이버 블로그·파워링크 성과를 수집한다. (도달·참여 지표는 계정 연결 후 확장)"""
+    return {"status": "planned", "message": "도달·참여 지표는 계정 연결 후 확장됩니다. "
+            "지금은 weekly_report 로 발행 이력 요약을 볼 수 있어요."}
+
+
+# ────────────────────────────────────────────────────────────
+# P1 무인화: 예약 발행 큐 + 러너 + 주간 리포트
+# ────────────────────────────────────────────────────────────
+@mcp.tool()
+def schedule_post(platform: str, scheduled_at: str, payload: dict) -> dict:
+    """게시물을 예약 큐에 넣는다(예약=승인). 러너가 시각이 되면 실제 발행한다.
+
+    Args:
+        platform: naver_blog | instagram | facebook
+        scheduled_at: ISO 시각 'YYYY-MM-DDTHH:MM:SS' (로컬)
+        payload: 플랫폼별 인자
+            naver_blog: {title, body_markdown, tags?, image_paths?, private?, blog_id?}
+            instagram/facebook: {image_urls, caption}
+    """
+    item_id = scheduler.add_scheduled(platform, payload, scheduled_at)
+    return {"status": "scheduled", "id": item_id, "platform": platform, "scheduled_at": scheduled_at}
+
+
+@mcp.tool()
+def list_scheduled(status: str = "scheduled") -> dict:
+    """예약된(또는 상태별) 게시물 목록. status: scheduled|published|failed|canceled|all"""
+    return {"items": scheduler.list_scheduled(None if status == "all" else status)}
+
+
+@mcp.tool()
+def cancel_scheduled(item_id: int) -> dict:
+    """예약 게시물 취소."""
+    ok = scheduler.cancel_scheduled(item_id)
+    return {"canceled": ok, "id": item_id}
+
+
+@mcp.tool()
+def run_scheduled_due() -> dict:
+    """예약 시각이 지난 항목을 지금 발행한다(수동 실행/테스트용). 무인 실행은 launchd/cron 이 담당."""
+    return runner.run_due()
+
+
+@mcp.tool()
+def weekly_report(days: int = 7) -> dict:
+    """최근 N일 발행 이력 요약(플랫폼별 건수)."""
+    return db.summary(days)
 
 
 # ────────────────────────────────────────────────────────────

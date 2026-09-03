@@ -59,6 +59,42 @@ def test_channel_assemble_and_alias(_tmp: Path) -> None:
     assert get_spec("twitter")["channel"] == "x", "별칭 정규화 실패"
 
 
+def test_scheduler_due_and_cancel(tmp_db: Path) -> None:
+    db.DB_PATH = tmp_db
+    from naver_marketing_mcp import scheduler
+    past = scheduler.add_scheduled("naver_blog", {"title": "t"}, "2000-01-01T00:00:00")
+    future = scheduler.add_scheduled("instagram", {"caption": "c"}, "2999-01-01T00:00:00")
+    due = scheduler.due_items()
+    assert [d["id"] for d in due] == [past], "지난 항목만 due 여야 함"
+    assert scheduler.cancel_scheduled(future) is True
+    assert scheduler.cancel_scheduled(future) is False, "이미 취소된 건 다시 취소 안 됨"
+    assert {i["id"] for i in scheduler.list_scheduled("canceled")} == {future}
+
+
+def test_hard_cap(tmp_db: Path) -> None:
+    db.DB_PATH = tmp_db
+    from naver_marketing_mcp.safety import DailyCapExceeded, check_daily_cap, effective_cap
+    assert effective_cap({}, "instagram") == 50, "policy 없어도 하드캡 적용"
+    assert effective_cap({"content": {"daily_cap": {"instagram": 3}}}, "instagram") == 3, "더 낮은 값"
+    policy = {"content": {"daily_cap": {"instagram": 1}}}
+    db.record_post("instagram", status="published")
+    try:
+        check_daily_cap(policy, "instagram")
+    except DailyCapExceeded:
+        pass
+    else:
+        raise AssertionError("상한 도달인데 통과")
+
+
+def test_summary(tmp_db: Path) -> None:
+    db.DB_PATH = tmp_db
+    db.record_post("naver_blog", status="published")
+    db.record_post("instagram", status="failed", error="x")
+    s = db.summary(7)
+    assert s["total_published"] == 1
+    assert s["by_platform"]["naver_blog"]["published"] == 1
+
+
 def _run() -> None:
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):
