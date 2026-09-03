@@ -368,14 +368,28 @@ def publish(
 
             # 발행 후 글 URL 로 이동 대기. 편집기가 iframe 이라 발행 시 top page 가 아니라
             # 하위 프레임이 글 페이지로 이동한다 → 모든 프레임에서 글 URL 패턴을 스캔.
+            def _looks_post(u: str) -> bool:
+                if not u or "Write" in u or "PostWriteForm" in u:
+                    return False
+                last = u.rstrip("/").split("/")[-1].split("?")[0]
+                return "logNo=" in u or "PostView" in u or (blog_id in u and last.isdigit())
+
             def _find_post_url() -> str | None:
                 for f in page.frames:
-                    u = f.url
-                    if "Redirect=Write" in u or "PostWriteForm" in u:
-                        continue
-                    last = u.rstrip("/").split("/")[-1].split("?")[0]
-                    if "logNo=" in u or (blog_id in u and last.isdigit()):
-                        return u
+                    if _looks_post(f.url):
+                        return f.url
+                # og:url / canonical (게시 후 글 페이지)
+                for f in page.frames:
+                    try:
+                        og = f.evaluate(
+                            "() => { const m=document.querySelector('meta[property=\"og:url\"]');"
+                            " const c=document.querySelector('link[rel=canonical]');"
+                            " return (m&&m.content)||(c&&c.href)||''; }"
+                        )
+                        if _looks_post(og):
+                            return og
+                    except Exception:  # noqa: BLE001
+                        pass
                 return None
 
             deadline = time.time() + 20

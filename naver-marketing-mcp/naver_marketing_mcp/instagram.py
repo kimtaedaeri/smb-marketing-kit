@@ -42,13 +42,18 @@ def publish(image_urls: list[str], caption: str) -> dict[str, Any]:
         raise ValueError("게시할 이미지 URL 이 필요합니다.")
     urls = image_urls[:IG_CAROUSEL_MAX]
 
+    graph_root = base.rsplit("/", 1)[0]
     if len(urls) == 1:
         creation_id = _create_container(base, token, urls[0], caption)
     else:
-        children = [_create_container(base, token, u, is_child=True) for u in urls]
+        children = []
+        for u in urls:
+            cid = _create_container(base, token, u, is_child=True)
+            _wait_container_ready(graph_root, token, cid)  # 각 자식 준비 대기
+            children.append(cid)
         creation_id = _create_carousel(base, token, children, caption)
 
-    time.sleep(5)  # 미디어 처리 대기
+    _wait_container_ready(graph_root, token, creation_id)  # 고정 대기 대신 상태 확인
     resp = requests.post(
         f"{base}/media_publish",
         params={"creation_id": creation_id, "access_token": token},
@@ -58,6 +63,21 @@ def publish(image_urls: list[str], caption: str) -> dict[str, Any]:
     post_id = resp.json()["id"]
     return {"status": "published", "platform": "instagram",
             "post_id": post_id, "post_url": f"https://www.instagram.com/p/{post_id}/"}
+
+
+def _wait_container_ready(graph_root: str, token: str, creation_id: str, timeout: int = 45) -> None:
+    """미디어 컨테이너 처리 완료(status_code=FINISHED)까지 대기. ERROR 면 예외."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        r = requests.get(f"{graph_root}/{creation_id}",
+                         params={"fields": "status_code", "access_token": token}, timeout=30)
+        s = r.json().get("status_code")
+        if s == "FINISHED":
+            return
+        if s == "ERROR":
+            raise RuntimeError(f"인스타 미디어 처리 실패: {r.json()}")
+        time.sleep(2)
+    # 시간 초과 시에도 게시를 시도(실패하면 상위에서 처리)
 
 
 def _create_container(base: str, token: str, image_url: str,

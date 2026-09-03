@@ -103,6 +103,13 @@ def test_naver_draft(_tmp: Path) -> None:
     assert d["image_paths"] == ["/x.png"]
 
 
+def test_images_url_passthrough(_tmp: Path) -> None:
+    from naver_marketing_mcp import images
+    assert images.is_url("https://x/y.jpg") and not images.is_url("/a/b.png")
+    # URL 은 처리 없이 그대로 통과(네트워크 불필요)
+    assert images.prep_for_instagram(["https://x/y.jpg"]) == ["https://x/y.jpg"]
+
+
 def _run() -> None:
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):
