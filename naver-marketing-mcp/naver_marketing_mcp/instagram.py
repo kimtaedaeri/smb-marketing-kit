@@ -11,7 +11,7 @@ from typing import Any
 
 import requests
 
-from .meta_auth import GRAPH, load_state
+from .meta_auth import GRAPH, IG_GRAPH, load_state
 
 IG_CAROUSEL_MAX = 10
 
@@ -20,17 +20,23 @@ def _require_state() -> dict[str, Any]:
     state = load_state()
     if not state or not state.get("ig_user_id"):
         raise RuntimeError(
-            "인스타 연결이 없습니다. connect_meta 로 먼저 연결하세요(인스타 비즈니스 계정 필요)."
+            "인스타 연결이 없습니다. connect_meta 로 먼저 연결하세요(인스타 프로페셔널 계정 필요)."
         )
     return state
+
+
+def _base_and_token(state: dict[str, Any]) -> tuple[str, str]:
+    """Instagram Login(IG 유저 토큰)이면 graph.instagram.com, 아니면 페이지 토큰+graph.facebook.com."""
+    ig = state["ig_user_id"]
+    if state.get("ig_access_token"):
+        return f"{IG_GRAPH}/{ig}", state["ig_access_token"]
+    return f"{GRAPH}/{ig}", state["page_access_token"]
 
 
 def publish(image_urls: list[str], caption: str) -> dict[str, Any]:
     """이미지 1장이면 단일, 여러 장이면 캐러셀로 게시. 게시 URL 반환."""
     state = _require_state()
-    ig = state["ig_user_id"]
-    token = state["page_access_token"]
-    base = f"{GRAPH}/{ig}"
+    base, token = _base_and_token(state)
 
     if not image_urls:
         raise ValueError("게시할 이미지 URL 이 필요합니다.")

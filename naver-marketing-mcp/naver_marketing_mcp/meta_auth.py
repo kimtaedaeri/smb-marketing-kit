@@ -38,6 +38,12 @@ SCOPES = [
 ]
 STATE_JSON = _AUTH_DIR / "meta_state.json"
 
+# ── Instagram API with Instagram Login (2025, 페이스북 페이지 불필요) ──
+IG_AUTH = "https://www.instagram.com/oauth/authorize"
+IG_TOKEN = "https://api.instagram.com/oauth/access_token"
+IG_GRAPH = "https://graph.instagram.com"
+IG_SCOPES = ["instagram_business_basic", "instagram_business_content_publish"]
+
 
 def _load_env() -> None:
     """키트 루트 .env 를 최소 파싱해 os.environ 에 주입(python-dotenv 없이)."""
@@ -96,15 +102,78 @@ def connect(timeout_sec: int = 300) -> dict[str, Any]:
     if broker:
         return _connect_via_broker(broker.rstrip("/"), timeout_sec)
 
+    # 권장: Instagram Login (페이스북 페이지 불필요, 크리에이터 OK)
+    ig_id = os.environ.get("META_IG_APP_ID")
+    ig_secret = os.environ.get("META_IG_APP_SECRET")
+    if ig_id and ig_secret:
+        return _connect_ig_login(ig_id, ig_secret, timeout_sec)
+
+    # 구: Facebook 페이지 연동 방식
     app_id = os.environ.get("META_APP_ID")
     app_secret = os.environ.get("META_APP_SECRET")
-    if not app_id or not app_secret:
-        return {
-            "status": "no_app",
-            "message": "META_BROKER_URL(권장) 또는 META_APP_ID/META_APP_SECRET 가 .env 에 없습니다. "
-            "docs/META_SETUP.md 참고.",
-        }
-    return _connect_dev(app_id, app_secret, timeout_sec)
+    if app_id and app_secret:
+        return _connect_dev(app_id, app_secret, timeout_sec)
+
+    return {
+        "status": "no_app",
+        "message": "META_BROKER_URL(권장) 또는 META_IG_APP_ID/META_IG_APP_SECRET 가 .env 에 없습니다. "
+        "docs/META_SETUP.md 참고.",
+    }
+
+
+def _capture_oauth_code(auth_url: str, timeout_sec: int) -> str | None:
+    """로컬 콜백 서버를 띄우고 브라우저 OAuth 동의 후 code 를 수령한다(사용자는 로그인·동의만)."""
+    _CallbackHandler.code = None
+    server = HTTPServer(("localhost", REDIRECT_PORT), _CallbackHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    proc = launch_real_chrome(auth_url)
+    try:
+        deadline = time.time() + timeout_sec
+        while time.time() < deadline and _CallbackHandler.code is None:
+            time.sleep(1.0)
+    finally:
+        server.shutdown()
+        _stop_chrome(proc)
+    code = _CallbackHandler.code
+    return code.split("#")[0] if code else None  # 인스타는 redirect 에 #_ 를 붙임
+
+
+def _connect_ig_login(app_id: str, app_secret: str, timeout_sec: int) -> dict[str, Any]:
+    """Instagram Login 방식 연결. 페이스북 페이지 없이 IG 유저 토큰을 직접 발급·저장."""
+    import requests
+
+    auth_url = f"{IG_AUTH}?" + urllib.parse.urlencode({
+        "client_id": app_id, "redirect_uri": REDIRECT_URI,
+        "scope": ",".join(IG_SCOPES), "response_type": "code",
+    })
+    code = _capture_oauth_code(auth_url, timeout_sec)
+    if not code:
+        return {"status": "timeout", "message": "로그인·동의가 완료되지 않았습니다."}
+
+    short = requests.post(IG_TOKEN, data={
+        "client_id": app_id, "client_secret": app_secret,
+        "grant_type": "authorization_code", "redirect_uri": REDIRECT_URI, "code": code,
+    }, timeout=30).json()
+    if "access_token" not in short:
+        return {"status": "error", "message": f"토큰 교환 실패: {short}"}
+    user_id = str(short.get("user_id", ""))
+
+    long = requests.get(f"{IG_GRAPH}/access_token", params={
+        "grant_type": "ig_exchange_token", "client_secret": app_secret,
+        "access_token": short["access_token"],
+    }, timeout=30).json().get("access_token", short["access_token"])
+
+    if not user_id:
+        me = requests.get(f"{IG_GRAPH}/me", params={"fields": "user_id", "access_token": long}).json()
+        user_id = str(me.get("user_id", ""))
+
+    state = {"ig_user_id": user_id, "ig_access_token": long,
+             "login": "instagram", "obtained_at": int(time.time())}
+    _AUTH_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_JSON.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+    return {"status": "connected", "via": "instagram_login", "ig_user_id": user_id,
+            "ig_linked": bool(user_id),
+            "message": "연결 완료! 인스타 계정이 잡혔어요. 이제 인스타에 게시할 수 있어요."}
 
 
 def _connect_via_broker(broker: str, timeout_sec: int) -> dict[str, Any]:
