@@ -44,6 +44,13 @@ IG_TOKEN = "https://api.instagram.com/oauth/access_token"
 IG_GRAPH = "https://graph.instagram.com"
 IG_SCOPES = ["instagram_business_basic", "instagram_business_content_publish"]
 
+# ── Threads API (graph.threads.net) — 인스타와 별개 계정/토큰 ──
+TH_GRAPH = "https://graph.threads.net"
+TH_AUTH = "https://threads.net/oauth/authorize"
+TH_TOKEN = "https://graph.threads.net/oauth/access_token"
+TH_SCOPES = ["threads_basic", "threads_content_publish"]
+THREADS_STATE_JSON = _AUTH_DIR / "threads_state.json"
+
 
 def _load_env() -> None:
     """키트 루트 .env 를 최소 파싱해 os.environ 에 주입(python-dotenv 없이)."""
@@ -351,6 +358,30 @@ def set_instagram_token(access_token: str) -> dict[str, Any]:
     STATE_JSON.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
     return {"status": "connected", "ig_user_id": uid, "username": me.get("username"),
             "message": f"인스타(@{me.get('username')}) 연결 완료! 이제 게시할 수 있어요."}
+
+
+def set_threads_token(access_token: str) -> dict[str, Any]:
+    """수동 발급한 Threads 토큰으로 연결한다(인스타와 별개 계정)."""
+    import requests
+
+    token = access_token.strip()
+    me = requests.get(f"{TH_GRAPH}/me",
+                      params={"fields": "id,username", "access_token": token}, timeout=30).json()
+    if me.get("error") or not me.get("id"):
+        msg = me.get("error", {}).get("message", me)
+        return {"status": "error", "message": f"토큰 확인 실패: {msg}. Threads 액세스 토큰인지 확인하세요."}
+    state = {"threads_user_id": str(me["id"]), "threads_access_token": token,
+             "username": me.get("username")}
+    _AUTH_DIR.mkdir(parents=True, exist_ok=True)
+    THREADS_STATE_JSON.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+    return {"status": "connected", "threads_user_id": str(me["id"]), "username": me.get("username"),
+            "message": f"스레드(@{me.get('username')}) 연결 완료! 이제 게시할 수 있어요."}
+
+
+def load_threads_state() -> dict[str, Any] | None:
+    if THREADS_STATE_JSON.exists():
+        return json.loads(THREADS_STATE_JSON.read_text(encoding="utf-8"))
+    return None
 
 
 def load_state() -> dict[str, Any] | None:

@@ -10,7 +10,7 @@ from mcp.server.fastmcp import FastMCP
 
 from . import (
     channels, db, facebook, instagram, meta_auth, naver_blog, powerlink,
-    runner, scheduler,
+    runner, scheduler, threads,
 )
 from .db import record_post
 from .policy import load_policy
@@ -249,6 +249,33 @@ def instagram_publish(image_urls: list[str], caption: str, approve: bool = False
         return {"status": "failed", "error": str(e)}
     record_post("instagram", status="published", title=caption[:40],
                 post_url=result.get("post_url"))
+    return result
+
+
+@mcp.tool()
+def set_threads_token(access_token: str) -> dict:
+    """수동 발급한 스레드 토큰으로 연결한다(인스타와 별개 계정). Threads 설정의 '액세스 토큰 생성'에서 받은 토큰."""
+    return meta_auth.set_threads_token(access_token)
+
+
+@mcp.tool()
+def threads_publish(text: str, image_urls: list[str] | None = None, approve: bool = False) -> dict:
+    """스레드 게시. 텍스트만도 가능(이미지 없으면). approve=False 면 미리보기만."""
+    if not approve:
+        return {"status": "draft", "platform": "threads",
+                "preview": {"text": text, "image_count": len(image_urls or [])},
+                "next": "approve=True 로 다시 호출하면 게시됩니다."}
+    policy = load_policy()
+    try:
+        check_daily_cap(policy, "threads")
+    except DailyCapExceeded as e:
+        return {"status": "blocked", "reason": str(e)}
+    try:
+        result = threads.publish(text, image_urls)
+    except Exception as e:  # noqa: BLE001
+        record_post("threads", status="failed", title=text[:40], error=str(e))
+        return {"status": "failed", "error": str(e)}
+    record_post("threads", status="published", title=text[:40], post_url=result.get("post_id"))
     return result
 
 
