@@ -329,6 +329,30 @@ def preflight() -> dict[str, Any]:
                    "지금 직접 테스트라면 docs/META_SETUP.md 로 앱을 한 번 만들어 키를 넣으세요."}
 
 
+def set_instagram_token(access_token: str) -> dict[str, Any]:
+    """수동 발급한 Instagram 토큰(IGAA…)으로 연결한다. 계정을 확인하고 저장.
+
+    Instagram 설정 페이지의 '액세스 토큰 생성'에서 받은 토큰을 붙여넣는 용도.
+    """
+    import requests
+
+    token = access_token.strip()
+    me = requests.get(f"{IG_GRAPH}/me",
+                      params={"fields": "user_id,username", "access_token": token},
+                      timeout=30).json()
+    if me.get("error") or not (me.get("user_id") or me.get("id")):
+        msg = me.get("error", {}).get("message", me)
+        return {"status": "error",
+                "message": f"토큰 확인 실패: {msg}. IGAA…로 시작하는 인스타 토큰인지 확인하세요."}
+    uid = str(me.get("user_id") or me.get("id"))
+    state = {"ig_user_id": uid, "ig_access_token": token,
+             "login": "instagram", "username": me.get("username")}
+    _AUTH_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_JSON.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+    return {"status": "connected", "ig_user_id": uid, "username": me.get("username"),
+            "message": f"인스타(@{me.get('username')}) 연결 완료! 이제 게시할 수 있어요."}
+
+
 def load_state() -> dict[str, Any] | None:
     if STATE_JSON.exists():
         return json.loads(STATE_JSON.read_text(encoding="utf-8"))

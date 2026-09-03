@@ -220,6 +220,15 @@ def connect_meta() -> dict:
 
 
 @mcp.tool()
+def set_instagram_token(access_token: str) -> dict:
+    """수동 발급한 인스타 토큰(IGAA…로 시작)으로 연결한다. 계정 확인 후 저장.
+    Instagram 설정 페이지의 '액세스 토큰 생성'에서 받은 토큰을 붙여넣을 때 사용.
+    자세한 발급법: docs/인스타그램_연결_가이드.md
+    """
+    return meta_auth.set_instagram_token(access_token)
+
+
+@mcp.tool()
 def instagram_publish(image_urls: list[str], caption: str, approve: bool = False) -> dict:
     """인스타그램 게시(무료 Graph API). image_urls 는 공개 URL(예: Higgsfield 생성물).
     approve=False 면 게시하지 않고 미리보기만 반환(승인 게이트).
