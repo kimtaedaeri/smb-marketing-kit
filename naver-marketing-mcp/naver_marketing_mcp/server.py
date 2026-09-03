@@ -46,9 +46,10 @@ def connect_naver() -> str:
 @mcp.tool()
 def naver_blog_publish(
     title: str,
-    body_markdown: str,
+    body_markdown: str = "",
     tags: list[str] | None = None,
     image_paths: list[str] | None = None,
+    blocks: list[dict] | None = None,
     private: bool = True,
     approve: bool = False,
 ) -> dict:
@@ -62,7 +63,10 @@ def naver_blog_publish(
         title: 글 제목 (SEO 고려).
         body_markdown: 본문(마크다운).
         tags: 태그 목록.
-        image_paths: 첨부할 로컬 이미지 경로(Higgsfield 생성물 등).
+        image_paths: 본문 뒤에 붙일 로컬 이미지 경로들(단순 방식).
+        blocks: 글·이미지를 순서대로 배치할 때 사용(권장).
+            예: [{"type":"text","text":"..."},{"type":"image","path":"/..png"},{"type":"text",...}]
+            지정 시 body_markdown/image_paths 대신 이 순서대로 삽입한다(글→이미지→글…).
         approve: True 여야 실제 게시. 기본 False(초안만).
     """
     policy = load_policy()
@@ -101,6 +105,7 @@ def naver_blog_publish(
             body_markdown=body_markdown,
             tags=tags,
             image_paths=image_paths,
+            blocks=blocks,
             private=private,
         )
     except Exception as e:  # noqa: BLE001 — 사용자에게 원인 전달 후 로그

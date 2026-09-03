@@ -200,19 +200,23 @@ def _insert_images(page: Any, frame: Any, image_paths: list[str]) -> int:
     업로드 완료(이미지 컴포넌트 등장)를 기다린다.
     """
     init = frame.locator(SELECTORS["image_component"]).count()
-    # ⚠️ 여러 장을 한 번에 넣으면 '사진 첨부 방식' 팝업이 뜬다 → 한 장씩 삽입해 회피
     for path in image_paths:
-        prev = frame.locator(SELECTORS["image_component"]).count()
-        with page.expect_file_chooser(timeout=15000) as fc:
-            frame.locator(SELECTORS["photo_btn"]).first.click()
-        fc.value.set_files(path)
-        deadline = time.time() + 40
-        while time.time() < deadline:
-            if frame.locator(SELECTORS["image_component"]).count() > prev:
-                break
-            time.sleep(1.0)
-        _human_pause(1.0, 2.0)  # 다음 삽입 전 여유
+        _insert_one_image(page, frame, path)
     return frame.locator(SELECTORS["image_component"]).count() - init
+
+
+def _insert_one_image(page: Any, frame: Any, path: str) -> None:
+    """이미지 1장을 현재 커서 위치에 삽입한다(멀티 첨부 팝업 회피 위해 항상 한 장씩)."""
+    prev = frame.locator(SELECTORS["image_component"]).count()
+    with page.expect_file_chooser(timeout=15000) as fc:
+        frame.locator(SELECTORS["photo_btn"]).first.click()
+    fc.value.set_files(path)
+    deadline = time.time() + 40
+    while time.time() < deadline:
+        if frame.locator(SELECTORS["image_component"]).count() > prev:
+            break
+        time.sleep(1.0)
+    _human_pause(1.0, 2.0)
 
 
 def _add_tags(page: Any, frame: Any, tags: list[str]) -> int:
@@ -269,9 +273,10 @@ def _type_text(page: Any, text: str) -> None:
 def publish(
     blog_id: str,
     title: str,
-    body_markdown: str,
+    body_markdown: str = "",
     tags: list[str] | None = None,
     image_paths: list[str] | None = None,
+    blocks: list[dict[str, Any]] | None = None,  # [{type:text,text}|{type:image,path}] 순서대로
     private: bool = True,      # 기본 비공개(안전). 공개는 명시적으로 False.
     headless: bool = False,    # CDP attach 방식에선 실제 창을 띄운다(무시됨)
 ) -> dict[str, Any]:
@@ -324,14 +329,24 @@ def publish(
             # 본문 입력
             frame.locator(SELECTORS["body_area"]).first.click()
             _human_pause(0.4, 0.9)
-            _type_text(page, body_markdown)
-            _human_pause(0.6, 1.2)
-
-            # 이미지 삽입 (본문 커서 뒤)
             inserted_images = 0
-            if image_paths:
-                inserted_images = _insert_images(page, frame, image_paths)
+            if blocks:
+                # 글→이미지→글→이미지… 순서대로 삽입 (자연스러운 배치)
+                for blk in blocks:
+                    if blk.get("type") == "image" and blk.get("path"):
+                        _insert_one_image(page, frame, blk["path"])
+                        inserted_images += 1
+                        page.keyboard.press("Enter")  # 이미지 뒤 새 줄
+                    else:
+                        _type_text(page, blk.get("text", ""))
+                        page.keyboard.press("Enter")
+                    _human_pause(0.3, 0.7)
+            else:
+                _type_text(page, body_markdown)
                 _human_pause(0.6, 1.2)
+                if image_paths:
+                    inserted_images = _insert_images(page, frame, image_paths)
+                    _human_pause(0.6, 1.2)
 
             # 발행 설정 패널 열기
             frame.locator(SELECTORS["publish_open_btn"]).first.click()
