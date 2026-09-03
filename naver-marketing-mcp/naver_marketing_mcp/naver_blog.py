@@ -199,18 +199,20 @@ def _insert_images(page: Any, frame: Any, image_paths: list[str]) -> int:
     '사진' 버튼 클릭 → OS 파일 선택창을 Playwright 가 가로채 파일을 넣는다(한 번에 여러 장).
     업로드 완료(이미지 컴포넌트 등장)를 기다린다.
     """
-    before = frame.locator(SELECTORS["image_component"]).count()
-    with page.expect_file_chooser(timeout=15000) as fc:
-        frame.locator(SELECTORS["photo_btn"]).first.click()
-    fc.value.set_files(image_paths)
-    # 업로드 완료 대기: 이미지 컴포넌트 수가 늘 때까지
-    deadline = time.time() + 40
-    while time.time() < deadline:
-        if frame.locator(SELECTORS["image_component"]).count() > before:
-            break
-        time.sleep(1.0)
-    time.sleep(3.0)  # 마지막 장 업로드 여유
-    return frame.locator(SELECTORS["image_component"]).count() - before
+    init = frame.locator(SELECTORS["image_component"]).count()
+    # ⚠️ 여러 장을 한 번에 넣으면 '사진 첨부 방식' 팝업이 뜬다 → 한 장씩 삽입해 회피
+    for path in image_paths:
+        prev = frame.locator(SELECTORS["image_component"]).count()
+        with page.expect_file_chooser(timeout=15000) as fc:
+            frame.locator(SELECTORS["photo_btn"]).first.click()
+        fc.value.set_files(path)
+        deadline = time.time() + 40
+        while time.time() < deadline:
+            if frame.locator(SELECTORS["image_component"]).count() > prev:
+                break
+            time.sleep(1.0)
+        _human_pause(1.0, 2.0)  # 다음 삽입 전 여유
+    return frame.locator(SELECTORS["image_component"]).count() - init
 
 
 def _add_tags(page: Any, frame: Any, tags: list[str]) -> int:
@@ -301,6 +303,18 @@ def publish(
             time.sleep(6)  # SmartEditor 로딩
 
             frame = page.frame_locator(SELECTORS["editor_iframe"])
+
+            # 이어쓰기(작성 중 글) 팝업 dismiss — '취소'(se-popup-button-cancel)로 새 글 시작
+            try:
+                mf_el = page.query_selector("iframe#mainFrame")
+                mff = mf_el.content_frame() if mf_el else None
+                if mff:
+                    btn = mff.wait_for_selector("button.se-popup-button-cancel", timeout=4000)
+                    if btn:
+                        btn.click(force=True)
+                        _human_pause(0.6, 1.1)
+            except Exception:  # noqa: BLE001
+                pass
 
             # 제목 입력
             frame.locator(SELECTORS["title_area"]).first.click()
