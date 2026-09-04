@@ -22,8 +22,11 @@ def _dispatch(platform: str, payload: dict[str, Any]) -> dict[str, Any]:
         blog_id = payload.get("blog_id") or load_policy().get("naver", {}).get("blog_id")
         return naver_blog.publish(
             blog_id=blog_id, title=payload["title"],
-            body_markdown=payload["body_markdown"], tags=payload.get("tags"),
-            image_paths=payload.get("image_paths"), private=payload.get("private", False),
+            body_markdown=payload.get("body_markdown", ""), tags=payload.get("tags"),
+            image_paths=payload.get("image_paths"), blocks=payload.get("blocks"),
+            category=payload.get("category"), visibility=payload.get("visibility"),
+            font=payload.get("font"), private=payload.get("private", False),
+            # schedule_at 은 큐가 시각을 관리하므로 여기선 넘기지 않는다(즉시 발행)
         )
     if platform == "instagram":
         from . import instagram

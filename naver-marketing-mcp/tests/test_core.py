@@ -120,6 +120,9 @@ def test_parse_schedule(_tmp: Path) -> None:
     # 59분은 다음 시각 00분으로 올림
     d = _parse_schedule(f"{far} 09:56")
     assert d.hour == 10 and d.minute == 0
+    # 이중 공백/ISO T 형식도 파싱
+    assert _parse_schedule(f"{far}  09:30").minute == 30
+    assert _parse_schedule(f"{far}T09:30").minute == 30
     # 과거와 형식 오류는 거부
     for bad in ["2020-01-01 09:00", "not-a-date"]:
         try:
@@ -127,6 +130,23 @@ def test_parse_schedule(_tmp: Path) -> None:
             raise AssertionError(f"거부돼야 함: {bad}")
         except ValueError:
             pass
+
+
+def test_launch_lock_mutex(_tmp: Path) -> None:
+    # 같은 프로세스에서 두 번째 획득은 즉시 거부돼야 한다(크롬 이중 실행 방지)
+    from naver_marketing_mcp import naver_blog as nb
+    nb._acquire_lock()
+    try:
+        try:
+            nb._acquire_lock()
+            raise AssertionError("두 번째 _acquire_lock 이 거부되지 않음")
+        except RuntimeError:
+            pass
+    finally:
+        nb._release_lock()
+    # 풀린 뒤엔 다시 획득 가능
+    nb._acquire_lock()
+    nb._release_lock()
 
 
 def _run() -> None:

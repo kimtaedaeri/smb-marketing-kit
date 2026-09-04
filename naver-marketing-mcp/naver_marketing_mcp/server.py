@@ -221,8 +221,9 @@ def schedule_post(platform: str, scheduled_at: str, payload: dict) -> dict:
         scheduled_at: ISO 시각 'YYYY-MM-DDTHH:MM:SS' (로컬)
         payload: 플랫폼별 인자
             naver_blog: {title, body_markdown?, blocks?, tags?, image_paths?,
-                         category?, visibility?, private?, blog_id?}
+                         category?, visibility?, font?, private?, blog_id?}
                 blocks 는 [{type, ...}] 리스트로 소제목, 인용구, 구분선, 이미지를 섞어 넣는다.
+                큐가 발행 시각을 관리하므로 payload 안에는 schedule_at 을 넣지 않는다.
             instagram/threads/facebook: {image_urls, caption}
     """
     item_id = scheduler.add_scheduled(platform, payload, scheduled_at)

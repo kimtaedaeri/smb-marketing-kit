@@ -20,6 +20,7 @@ import random
 import re
 import shutil
 import subprocess
+import threading
 import time
 import urllib.request
 from datetime import datetime, timedelta
@@ -178,6 +179,7 @@ def _wait_for_cdp(timeout: float = 30.0) -> None:
 
 
 _LOCK_FILE = _AUTH_DIR / "chrome.lock"
+_LAUNCH_LOCK = threading.Lock()  # 같은 프로세스 내 동시 실행 방지(진짜 뮤텍스)
 
 
 def _pid_alive(pid: int) -> bool:
@@ -189,15 +191,27 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _acquire_lock() -> None:
-    """동시 브라우저 작업을 막는다(포트 9222·프로파일 충돌 방지)."""
+    """동시 브라우저 작업을 막는다(포트 9222·프로파일 충돌 방지).
+
+    프로세스 안에서는 threading.Lock 으로 실제 상호배제하고(동일 MCP 서버가 겹친 호출을
+    처리해도 두 번째 크롬이 뜨지 않게), 프로세스 사이에서는 pid 파일로 양보한다.
+    """
+    # 1) 같은 프로세스 내 동시 실행 차단(진짜 뮤텍스)
+    if not _LAUNCH_LOCK.acquire(blocking=False):
+        raise RuntimeError(
+            "다른 네이버/브라우저 작업이 실행 중이에요. 끝난 뒤 다시 시도해 주세요."
+        )
+    # 2) 다른 프로세스(다른 창/세션)가 잡고 있으면 양보
     if _LOCK_FILE.exists():
         try:
             pid = int(_LOCK_FILE.read_text().strip())
         except Exception:  # noqa: BLE001
             pid = 0
         if pid and pid != os.getpid() and _pid_alive(pid):
+            _LAUNCH_LOCK.release()
             raise RuntimeError(
-                "다른 네이버/브라우저 작업이 실행 중이에요. 끝난 뒤 다시 시도해 주세요."
+                "다른 프로그램이 네이버 자동화를 쓰고 있는 것 같아요(다른 창이나 세션). "
+                "끝난 뒤 다시 시도하거나, 확실히 아니라면 .auth/chrome.lock 파일을 지워 주세요."
             )
     _AUTH_DIR.mkdir(parents=True, exist_ok=True)
     _LOCK_FILE.write_text(str(os.getpid()))
@@ -208,6 +222,10 @@ def _release_lock() -> None:
         _LOCK_FILE.unlink()
     except Exception:  # noqa: BLE001
         pass
+    try:
+        _LAUNCH_LOCK.release()
+    except RuntimeError:
+        pass  # 이미 풀려 있으면 무시
 
 
 def _require(locator: Any, name: str, timeout: int = 8000) -> None:
@@ -223,17 +241,17 @@ def _require(locator: Any, name: str, timeout: int = 8000) -> None:
 def launch_real_chrome(start_url: str = "") -> subprocess.Popen:
     """평범한 Chrome 을 원격 디버깅 포트와 함께 직접 실행(자동화 플래그 없음)."""
     _acquire_lock()
-    _AUTH_DIR.mkdir(parents=True, exist_ok=True)
-    args = [
-        find_chrome(),
-        f"--remote-debugging-port={CDP_PORT}",
-        f"--user-data-dir={PROFILE_DIR}",
-        "--no-first-run",
-        "--no-default-browser-check",
-    ]
-    if start_url:
-        args.append(start_url)
     try:
+        _AUTH_DIR.mkdir(parents=True, exist_ok=True)
+        args = [
+            find_chrome(),   # Chrome 미설치 등으로 실패해도 아래 except 가 락을 푼다
+            f"--remote-debugging-port={CDP_PORT}",
+            f"--user-data-dir={PROFILE_DIR}",
+            "--no-first-run",
+            "--no-default-browser-check",
+        ]
+        if start_url:
+            args.append(start_url)
         proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         _wait_for_cdp()
     except Exception:
@@ -435,32 +453,36 @@ def _parse_schedule(value: str) -> datetime:
     허용 형식: 'YYYY-MM-DDTHH:MM', 'YYYY-MM-DD HH:MM', 초/타임존 포함도 관대하게 파싱.
     네이버는 10분 단위(00,10,20,30,40,50)만 허용하므로 분을 가장 가까운 10분으로 맞춘다.
     """
-    s = value.strip().replace("T", " ")
+    # 공백은 한 칸으로 정규화(이중 공백 등)하고 T 는 공백으로. 슬라이스 없이 전체를 파싱.
+    s = re.sub(r"\s+", " ", value.strip().replace("T", " "))
     dt: datetime | None = None
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y.%m.%d %H:%M", "%Y/%m/%d %H:%M"):
         try:
-            dt = datetime.strptime(s[:len(fmt) + 2].strip(), fmt)
+            dt = datetime.strptime(s, fmt)
             break
         except ValueError:
             continue
     if dt is None:
         try:
-            dt = datetime.fromisoformat(value.strip())
-            dt = dt.replace(tzinfo=None)
+            dt = datetime.fromisoformat(value.strip()).replace(tzinfo=None)
         except ValueError as e:
             raise ValueError(
                 f"예약 시각 형식을 이해하지 못했어요: {value} "
                 "(예: '2026-09-10 09:00')"
             ) from e
-    # 10분 단위 반올림
-    rounded = int(round(dt.minute / 10.0) * 10)
+    # 10분 단위 반올림(00,10,20,30,40,50)
     dt = dt.replace(second=0, microsecond=0)
+    rounded = int(round(dt.minute / 10.0) * 10)
     if rounded == 60:
         dt = dt.replace(minute=0) + timedelta(hours=1)
     else:
         dt = dt.replace(minute=rounded)
-    # 네이버는 최소 약 10분 뒤부터 예약 가능 — 과거/직전이면 거부
-    if dt <= datetime.now() + timedelta(minutes=5):
+    # 반올림 때문에 지금보다 이르게 잡혔으면 다음 10분 슬롯으로 올린다(예: 13:58에 14:04 요청 → 14:10)
+    now = datetime.now()
+    if dt <= now + timedelta(minutes=5):
+        dt = dt + timedelta(minutes=10)
+    # 그래도 과거/직전이면(진짜 과거 요청) 거부
+    if dt <= now + timedelta(minutes=5):
         raise ValueError(
             f"예약 시각이 너무 이르거나 과거예요: {dt:%Y-%m-%d %H:%M}. "
             "지금부터 최소 10분 뒤로 잡아 주세요."
