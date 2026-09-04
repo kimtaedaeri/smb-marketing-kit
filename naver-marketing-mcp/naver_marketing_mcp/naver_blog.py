@@ -27,8 +27,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-_KIT_ROOT = Path(__file__).resolve().parents[2]
-_AUTH_DIR = _KIT_ROOT / ".auth"
+from .policy import data_dir
+
+# 로그인 세션은 설치 폴더가 아니라 결정된 데이터 폴더(개발=키트루트, 설치=홈)에 저장
+_AUTH_DIR = data_dir() / ".auth"
 PROFILE_DIR = _AUTH_DIR / "chrome-profile"        # 임시 Chrome 프로파일
 SESSION_JSON = _AUTH_DIR / "naver_state.json"     # 실제 세션(쿠키) 저장처 — 이게 진짜 소스
 

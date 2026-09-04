@@ -12,18 +12,27 @@ from . import (
     channels, db, facebook, images, instagram, meta_auth, naver_blog, powerlink,
     runner, scheduler, threads,
 )
+import os
+
 from .db import record_post
-from .policy import load_policy
+from .policy import load_policy, read_config, write_config
 from .safety import DailyCapExceeded, check_daily_cap, human_delay
 
 mcp = FastMCP("naver-marketing")
 
 
 def _blog_id(policy: dict) -> str:
-    bid = policy.get("naver", {}).get("blog_id")
+    """블로그 아이디를 환경변수 → 저장된 설정 → policy.yaml 순으로 찾는다."""
+    bid = (
+        os.environ.get("SMB_NAVER_BLOG_ID")
+        or read_config().get("naver_blog_id")
+        or policy.get("naver", {}).get("blog_id")
+    )
     if not bid:
         raise ValueError(
-            "policy.yaml 에 naver.blog_id 가 없습니다. 블로그 아이디를 설정하세요."
+            "네이버 블로그 아이디가 아직 없어요. connect_naver 를 부를 때 "
+            "blog_id 를 함께 넣어 주세요(예: connect_naver(blog_id=\"내블로그아이디\")). "
+            "블로그 아이디는 blog.naver.com/뒤에 오는 그 아이디예요."
         )
     return bid
 
@@ -32,10 +41,16 @@ def _blog_id(policy: dict) -> str:
 # 계정 연결
 # ────────────────────────────────────────────────────────────
 @mcp.tool()
-def connect_naver() -> str:
+def connect_naver(blog_id: str = "") -> str:
     """네이버 로그인(최초 1회). 브라우저 창을 띄워 사용자가 직접 로그인하고,
-    세션을 로컬 .auth/ 에 저장한다. 비밀번호는 저장하지 않는다(세션 쿠키만).
+    세션을 로컬 데이터 폴더에 저장한다. 비밀번호는 저장하지 않는다(세션 쿠키만).
+
+    Args:
+        blog_id: 본인 네이버 블로그 아이디(blog.naver.com/뒤의 그 아이디).
+            처음 한 번만 넣으면 저장되어 다음부턴 생략해도 된다.
     """
+    if blog_id:
+        write_config(naver_blog_id=blog_id.strip())
     policy = load_policy()
     return naver_blog.save_session(blog_id=_blog_id(policy))
 
