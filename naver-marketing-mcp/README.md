@@ -37,7 +37,10 @@ Blotato·Higgsfield가 못 하는 한국 갭만 담당합니다.
 
 ### 방법 1. 앱에서 더블클릭 (터미널 모름, 추천)
 
-Claude 데스크톱 앱을 쓰면 `.mcpb` 파일을 더블클릭해 설치합니다. 파이썬도 uv도 미리 안 깔아도 됩니다(번들에 uv 포함). 자세한 안내는 [docs/설치_앱_더블클릭.md](../docs/설치_앱_더블클릭.md). 번들 빌드는 [mcpb/](../mcpb/) 참고. (현재 macOS arm64)
+Claude 데스크톱 앱을 쓰면 `.mcpb` 파일을 더블클릭해 설치합니다. 파이썬도 uv도 미리 안 깔아도 됩니다(번들에 uv 포함).
+
+- 다운로드: https://github.com/kimtaedaeri/smb-marketing-kit/releases/latest (맥은 `-mac`, 윈도우는 `-win`)
+- 자세한 안내는 [docs/설치_앱_더블클릭.md](../docs/설치_앱_더블클릭.md), 번들 빌드는 [mcpb/](../mcpb/) 참고. 맥은 애플 실리콘과 인텔 모두 지원(유니버설).
 
 ### 방법 2. 한 줄 설치 (Claude Code, 터미널)
 
