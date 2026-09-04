@@ -156,6 +156,19 @@ def naver_blog_draft(
     return naver_blog.format_draft(title, body_markdown, tags, image_paths)
 
 
+@mcp.tool()
+def naver_health_check(blog_id: str) -> dict:
+    """글쓰기 화면을 열어 핵심 버튼과 입력창이 그대로인지 점검한다(네이버 UI 변경 조기 감지).
+
+    발행은 하지 않는다. 자동화가 갑자기 안 될 때 먼저 돌려보면,
+    세션이 만료됐는지 아니면 네이버 화면이 바뀐 것인지 바로 구분된다.
+
+    Args:
+        blog_id: 점검에 쓸 본인 블로그 아이디.
+    """
+    return naver_blog.health_check(blog_id)
+
+
 # ────────────────────────────────────────────────────────────
 # 파워링크 입찰 (퍼포먼스)
 # ────────────────────────────────────────────────────────────
@@ -177,7 +190,7 @@ def powerlink_bidding(dry_run: bool = True) -> dict:
 @mcp.tool()
 def collect_performance(days: int = 7) -> dict:
     """최근 N일 네이버 블로그·파워링크 성과를 수집한다. (도달·참여 지표는 계정 연결 후 확장)"""
-    return {"status": "planned", "message": "도달·참여 지표는 계정 연결 후 확장됩니다. "
+    return {"status": "planned", "message": "도달과 참여 지표는 계정 연결 후 확장됩니다. "
             "지금은 weekly_report 로 발행 이력 요약을 볼 수 있어요."}
 
 
@@ -189,11 +202,13 @@ def schedule_post(platform: str, scheduled_at: str, payload: dict) -> dict:
     """게시물을 예약 큐에 넣는다(예약=승인). 러너가 시각이 되면 실제 발행한다.
 
     Args:
-        platform: naver_blog | instagram | facebook
+        platform: naver_blog | instagram | threads | facebook
         scheduled_at: ISO 시각 'YYYY-MM-DDTHH:MM:SS' (로컬)
         payload: 플랫폼별 인자
-            naver_blog: {title, body_markdown, tags?, image_paths?, private?, blog_id?}
-            instagram/facebook: {image_urls, caption}
+            naver_blog: {title, body_markdown?, blocks?, tags?, image_paths?,
+                         category?, visibility?, private?, blog_id?}
+                blocks 는 [{type, ...}] 리스트로 소제목, 인용구, 구분선, 이미지를 섞어 넣는다.
+            instagram/threads/facebook: {image_urls, caption}
     """
     item_id = scheduler.add_scheduled(platform, payload, scheduled_at)
     return {"status": "scheduled", "id": item_id, "platform": platform, "scheduled_at": scheduled_at}

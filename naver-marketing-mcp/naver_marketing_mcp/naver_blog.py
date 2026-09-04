@@ -148,8 +148,52 @@ def _wait_for_cdp(timeout: float = 30.0) -> None:
     raise RuntimeError("Chrome 원격 디버깅 포트(CDP) 준비 실패.")
 
 
+_LOCK_FILE = _AUTH_DIR / "chrome.lock"
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _acquire_lock() -> None:
+    """동시 브라우저 작업을 막는다(포트 9222·프로파일 충돌 방지)."""
+    if _LOCK_FILE.exists():
+        try:
+            pid = int(_LOCK_FILE.read_text().strip())
+        except Exception:  # noqa: BLE001
+            pid = 0
+        if pid and pid != os.getpid() and _pid_alive(pid):
+            raise RuntimeError(
+                "다른 네이버/브라우저 작업이 실행 중이에요. 끝난 뒤 다시 시도해 주세요."
+            )
+    _AUTH_DIR.mkdir(parents=True, exist_ok=True)
+    _LOCK_FILE.write_text(str(os.getpid()))
+
+
+def _release_lock() -> None:
+    try:
+        _LOCK_FILE.unlink()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _require(locator: Any, name: str, timeout: int = 8000) -> None:
+    """중요 요소를 짧은 타임아웃으로 클릭. 없으면 30초 행 대신 즉시 명확한 에러."""
+    try:
+        locator.first.click(timeout=timeout)
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(
+            f"네이버 화면에서 '{name}' 을(를) 찾지 못했어요. 에디터가 바뀌었을 수 있습니다."
+        ) from e
+
+
 def launch_real_chrome(start_url: str = "") -> subprocess.Popen:
     """평범한 Chrome 을 원격 디버깅 포트와 함께 직접 실행(자동화 플래그 없음)."""
+    _acquire_lock()
     _AUTH_DIR.mkdir(parents=True, exist_ok=True)
     args = [
         find_chrome(),
@@ -160,8 +204,12 @@ def launch_real_chrome(start_url: str = "") -> subprocess.Popen:
     ]
     if start_url:
         args.append(start_url)
-    proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    _wait_for_cdp()
+    try:
+        proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _wait_for_cdp()
+    except Exception:
+        _release_lock()
+        raise
     return proc
 
 
@@ -174,6 +222,8 @@ def _stop_chrome(proc: subprocess.Popen) -> None:
             proc.kill()
         except Exception:  # noqa: BLE001
             pass
+    finally:
+        _release_lock()
 
 
 # ── 로그인 / 세션 확인 / 게시 ────────────────────────────────
@@ -362,6 +412,49 @@ def _type_text(page: Any, text: str) -> None:
             page.keyboard.press("Enter")
 
 
+def health_check(blog_id: str) -> dict[str, Any]:
+    """글쓰기 화면을 열어 핵심 셀렉터가 여전히 유효한지 점검한다(네이버 UI 변경 조기 감지)."""
+    if not session_exists():
+        return {"ok": False, "reason": "no_session",
+                "message": "먼저 connect_naver 로 로그인하세요."}
+    from playwright.sync_api import sync_playwright
+
+    checks: dict[str, bool] = {}
+    proc = launch_real_chrome()
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.connect_over_cdp(CDP_URL)
+            ctx = browser.contexts[0]
+            _apply_saved_cookies(ctx)
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            page.goto(WRITE_URL.format(blog_id=blog_id), wait_until="domcontentloaded")
+            time.sleep(6)
+            if "nid.naver.com" in page.url or "nidlogin" in page.url:
+                browser.close()
+                return {"ok": False, "reason": "session_expired",
+                        "message": "세션 만료 — connect_naver 로 다시 로그인하세요."}
+            frame = page.frame_locator(SELECTORS["editor_iframe"])
+            try:
+                frame.locator(SELECTORS["body_area"]).first.click(timeout=8000)
+                _human_pause(0.3, 0.6)
+            except Exception:  # noqa: BLE001
+                pass
+            for label, key in [("제목", "title_area"), ("본문", "body_area"),
+                               ("사진", "photo_btn"), ("구분선", "divider_btn"),
+                               ("인용구", "quote_btn"), ("문단스타일", "style_trigger")]:
+                try:
+                    checks[label] = frame.locator(SELECTORS[key]).count() > 0
+                except Exception:  # noqa: BLE001
+                    checks[label] = False
+            browser.close()
+    finally:
+        _stop_chrome(proc)
+    missing = [k for k, v in checks.items() if not v]
+    return {"ok": not missing, "checks": checks, "missing": missing,
+            "message": "모든 핵심 요소 정상" if not missing
+                       else f"바뀐 것으로 보이는 요소: {', '.join(missing)}"}
+
+
 def publish(
     blog_id: str,
     title: str,
@@ -413,6 +506,7 @@ def publish(
             tags_added = 0
             blocks_failed: list[dict[str, Any]] = []
             category_applied: bool | None = None
+            published = False   # 최종 발행 클릭 이후엔 실패로 보고하지 않는다
             try:
                 # 이어쓰기(작성 중 글) 팝업 dismiss — '취소'로 새 글 시작
                 try:
@@ -427,12 +521,12 @@ def publish(
                     pass
 
                 # 제목
-                frame.locator(SELECTORS["title_area"]).first.click()
+                _require(frame.locator(SELECTORS["title_area"]), "제목 입력칸")
                 _human_pause(0.4, 0.9)
                 _type_text(page, title)
 
                 # 본문
-                frame.locator(SELECTORS["body_area"]).first.click()
+                _require(frame.locator(SELECTORS["body_area"]), "본문 입력칸")
                 _human_pause(0.4, 0.9)
                 if blocks:
                     for i, blk in enumerate(blocks):
@@ -474,7 +568,7 @@ def publish(
                         _human_pause(0.6, 1.2)
 
                 # 발행 설정 패널 열기
-                frame.locator(SELECTORS["publish_open_btn"]).first.click()
+                _require(frame.locator(SELECTORS["publish_open_btn"]), "발행 설정 버튼")
                 time.sleep(2.0)
 
                 # 카테고리(정확 일치). 불일치/실패는 category_applied=False 로 알린다
@@ -498,13 +592,17 @@ def publish(
 
                 # 공개 범위: visibility 우선, 없으면 private. 전체공개는 기본 선택이라 스킵
                 vis = visibility or ("private" if private else "public")
+                if vis not in _VISIBILITY:
+                    raise RuntimeError(
+                        f"visibility 값이 잘못됐어요: {vis} (public/neighbor/both/private 중 하나)"
+                    )
                 if vis != "public":
-                    vid = _VISIBILITY.get(vis, "open_private")
-                    frame.locator(f'label[for="{vid}"]').click()
+                    frame.locator(f'label[for="{_VISIBILITY[vis]}"]').click()
                     _human_pause(0.3, 0.7)
 
-                # 최종 발행
-                frame.locator(SELECTORS["publish_confirm_btn"]).click()
+                # 최종 발행 — 이 클릭 이후엔 후처리 실패가 있어도 이중발행하지 않도록 published 표시
+                _require(frame.locator(SELECTORS["publish_confirm_btn"]), "최종 발행 버튼")
+                published = True
 
                 # 글 URL 회수(발행 시 하위 프레임이 글 페이지로 이동)
                 def _looks_post(u: str) -> bool:
@@ -530,20 +628,25 @@ def publish(
                             pass
                     return None
 
-                deadline = time.time() + 20
-                while time.time() < deadline:
-                    post_url = _find_post_url()
-                    if post_url:
-                        break
-                    time.sleep(1.0)
-                page.screenshot(path=str(shot))
+                try:
+                    deadline = time.time() + 20
+                    while time.time() < deadline:
+                        post_url = _find_post_url()
+                        if post_url:
+                            break
+                        time.sleep(1.0)
+                    page.screenshot(path=str(shot))
+                except Exception:  # noqa: BLE001
+                    pass  # 발행은 끝났으니 후처리(URL·스크린샷) 실패는 무시
             except Exception:
-                # 실패 시 진단용 스크린샷을 남기고 원인 전달
+                # 실패 시 진단용 스크린샷을 남긴다
                 try:
                     page.screenshot(path=str(_AUTH_DIR / "last_error_screen.png"))
                 except Exception:  # noqa: BLE001
                     pass
-                raise
+                if not published:
+                    raise
+                # 이미 발행됨 → 후처리 예외는 실패로 재발생시키지 않는다(이중발행 방지)
             browser.close()
     finally:
         _stop_chrome(proc)
