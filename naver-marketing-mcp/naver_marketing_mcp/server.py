@@ -53,6 +53,7 @@ def naver_blog_publish(
     category: str | None = None,
     visibility: str | None = None,
     font: str | None = None,
+    schedule_at: str | None = None,
     private: bool = True,
     approve: bool = False,
 ) -> dict:
@@ -81,7 +82,11 @@ def naver_blog_publish(
             나눔스퀘어, 마루부리, 다시시작해, 바른히피, 우리딸손글씨.
             감성 글엔 마루부리나 손글씨 계열(다시시작해, 우리딸손글씨)이 잘 어울린다.
             블록마다 다르게 주려면 블록에 {"font":"..."} 를 넣는다.
-        approve: True 여야 실제 게시. 기본 False(초안만).
+        schedule_at: 네이버 네이티브 예약발행 시각 'YYYY-MM-DD HH:MM'(로컬 시간).
+            지정하면 지금 발행하지 않고 그 시각에 자동 발행되도록 예약한다.
+            분은 10분 단위(00,10,20,30,40,50)로 반올림되며, 지금부터 최소 10분 뒤여야 한다.
+            예약은 네이버 서버가 처리하므로 그 시각에 PC가 켜져 있지 않아도 된다.
+        approve: True 여야 실제 게시(또는 예약). 기본 False(초안만).
     """
     policy = load_policy()
 
@@ -106,6 +111,7 @@ def naver_blog_publish(
                 "category": category,
                 "visibility": visibility or ("private" if private else "public"),
                 "font": font or "기본(네이버 기본 글꼴)",
+                "schedule_at": schedule_at or "즉시 발행",
             },
             "next": "이 미리보기를 확인한 뒤 approve=True 로 다시 호출하면 게시됩니다.",
         }
@@ -130,19 +136,21 @@ def naver_blog_publish(
             category=category,
             visibility=visibility,
             font=font,
+            schedule_at=schedule_at,
             private=private,
         )
     except Exception as e:  # noqa: BLE001 — 사용자에게 원인 전달 후 로그
         record_post("naver_blog", status="failed", title=title, error=str(e))
         return {"status": "failed", "error": str(e)}
 
-    status = "published" if result.get("status") == "published" else "draft"
+    # published 또는 scheduled 는 성공으로 기록, 그 외는 draft
+    status = result.get("status") if result.get("status") in ("published", "scheduled") else "draft"
     record_post(
         "naver_blog",
         status=status,
         title=title,
         post_url=result.get("post_url"),
-        error=None if status == "published" else result.get("message"),
+        error=None if status in ("published", "scheduled") else result.get("message"),
     )
     return result
 

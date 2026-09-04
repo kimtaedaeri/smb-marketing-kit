@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import time
 import urllib.request
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +76,19 @@ _FONTS = {
     "다시시작해": "nanumdasisijaghae",
     "바른히피": "nanumbareunhipi",
     "우리딸손글씨": "nanumuriddalsongeulssi",
+}
+
+# 네이버 네이티브 예약발행 컨트롤(발행 패널). 해시 클래스는 부분일치로 잡아 변경에 견디게 한다.
+_SCHED = {
+    "radio_reserve": 'label[for="radio_time2"]',       # '예약' 라디오
+    "date_input": 'input[class*="input_date"]',        # 읽기전용 → 클릭 시 달력
+    "hour_select": 'select[class*="hour_option"]',     # 00~23
+    "minute_select": 'select[class*="minute_option"]', # 00,10,20,30,40,50 (10분 단위)
+    "cal_title": ".ui-datepicker-title",               # 예: '2026년 9월'
+    "cal_prev": ".ui-datepicker-prev",
+    "cal_next": ".ui-datepicker-next",
+    # 날짜 표는 클래스가 없어 .ui-datepicker 하위의 활성 버튼으로 잡는다(비활성일은 td.ui-state-disabled).
+    "cal_day": ".ui-datepicker button.ui-state-default",
 }
 
 _TYPE_DELAY = (0.03, 0.12)
@@ -415,6 +429,73 @@ def _set_font(frame: Any, font_name: str) -> None:
     _human_pause(0.3, 0.6)
 
 
+def _parse_schedule(value: str) -> datetime:
+    """예약 시각 문자열을 datetime 으로. 10분 단위 반올림, 과거면 거부.
+
+    허용 형식: 'YYYY-MM-DDTHH:MM', 'YYYY-MM-DD HH:MM', 초/타임존 포함도 관대하게 파싱.
+    네이버는 10분 단위(00,10,20,30,40,50)만 허용하므로 분을 가장 가까운 10분으로 맞춘다.
+    """
+    s = value.strip().replace("T", " ")
+    dt: datetime | None = None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y.%m.%d %H:%M", "%Y/%m/%d %H:%M"):
+        try:
+            dt = datetime.strptime(s[:len(fmt) + 2].strip(), fmt)
+            break
+        except ValueError:
+            continue
+    if dt is None:
+        try:
+            dt = datetime.fromisoformat(value.strip())
+            dt = dt.replace(tzinfo=None)
+        except ValueError as e:
+            raise ValueError(
+                f"예약 시각 형식을 이해하지 못했어요: {value} "
+                "(예: '2026-09-10 09:00')"
+            ) from e
+    # 10분 단위 반올림
+    rounded = int(round(dt.minute / 10.0) * 10)
+    dt = dt.replace(second=0, microsecond=0)
+    if rounded == 60:
+        dt = dt.replace(minute=0) + timedelta(hours=1)
+    else:
+        dt = dt.replace(minute=rounded)
+    # 네이버는 최소 약 10분 뒤부터 예약 가능 — 과거/직전이면 거부
+    if dt <= datetime.now() + timedelta(minutes=5):
+        raise ValueError(
+            f"예약 시각이 너무 이르거나 과거예요: {dt:%Y-%m-%d %H:%M}. "
+            "지금부터 최소 10분 뒤로 잡아 주세요."
+        )
+    return dt
+
+
+def _set_schedule(frame: Any, when: datetime) -> None:
+    """네이버 네이티브 예약발행 시각을 설정한다(발행 패널이 열린 상태에서 호출)."""
+    frame.locator(_SCHED["radio_reserve"]).first.click()
+    _human_pause(0.4, 0.8)
+    # 달력 열고 목표 연/월로 이동
+    frame.locator(_SCHED["date_input"]).first.click()
+    _human_pause(0.4, 0.8)
+    target = (when.year, when.month)
+    for _ in range(24):  # 최대 24개월 이동(무한루프 방지)
+        title = frame.locator(_SCHED["cal_title"]).first.inner_text(timeout=4000)
+        m = re.search(r"(\d{4}).*?(\d{1,2})", title)
+        cur = (int(m.group(1)), int(m.group(2))) if m else target
+        if cur == target:
+            break
+        nav = _SCHED["cal_next"] if cur < target else _SCHED["cal_prev"]
+        frame.locator(nav).first.click()
+        _human_pause(0.2, 0.45)
+    # 해당 '일' 클릭(정확 일치)
+    day_re = re.compile(rf"^{when.day}$")
+    frame.locator(_SCHED["cal_day"], has_text=day_re).first.click(timeout=4000)
+    _human_pause(0.3, 0.6)
+    # 시/분 선택(select 요소)
+    frame.locator(_SCHED["hour_select"]).first.select_option(f"{when.hour:02d}")
+    _human_pause(0.2, 0.4)
+    frame.locator(_SCHED["minute_select"]).first.select_option(f"{when.minute:02d}")
+    _human_pause(0.2, 0.4)
+
+
 def _insert_divider(frame: Any) -> None:
     """구분선을 커서 위치에 삽입."""
     frame.locator(SELECTORS["divider_btn"]).first.click()
@@ -493,6 +574,7 @@ def publish(
     category: str | None = None,       # 발행 카테고리 이름(정확히 일치)
     visibility: str | None = None,     # public|neighbor|both|private (없으면 private 파라미터 사용)
     font: str | None = None,           # 본문 기본 글꼴(예: 마루부리, 우리딸손글씨). None 이면 네이버 기본
+    schedule_at: str | None = None,    # 네이티브 예약발행 시각 'YYYY-MM-DD HH:MM'(로컬). None 이면 즉시
     private: bool = True,      # 기본 비공개(안전). 공개는 명시적으로 False.
     headless: bool = False,    # CDP attach 방식에선 실제 창을 띄운다(무시됨)
 ) -> dict[str, Any]:
@@ -513,6 +595,8 @@ def publish(
         raise ValueError(
             f"지원하지 않는 글꼴이에요: {font}. 가능한 글꼴: {', '.join(_FONTS)}"
         )
+    # 예약 시각도 브라우저 띄우기 전에 파싱/검증(10분 단위 반올림, 과거 거부)
+    sched_dt = _parse_schedule(schedule_at) if schedule_at else None
 
     from playwright.sync_api import sync_playwright
 
@@ -641,6 +725,11 @@ def publish(
                     frame.locator(f'label[for="{_VISIBILITY[vis]}"]').click()
                     _human_pause(0.3, 0.7)
 
+                # 예약발행 시각(네이티브) — 지정 시 '예약' 선택 후 날짜/시/분 설정
+                if sched_dt:
+                    _set_schedule(frame, sched_dt)
+                    _human_pause(0.3, 0.6)
+
                 # 최종 발행 — 이 클릭 이후엔 후처리 실패가 있어도 이중발행하지 않도록 published 표시
                 _require(frame.locator(SELECTORS["publish_confirm_btn"]), "최종 발행 버튼")
                 published = True
@@ -693,7 +782,7 @@ def publish(
         _stop_chrome(proc)
 
     result = {
-        "status": "published",
+        "status": "scheduled" if sched_dt else "published",
         "private": private,
         "visibility": visibility or ("private" if private else "public"),
         "post_url": post_url,
@@ -701,6 +790,9 @@ def publish(
         "tags_added": tags_added,
         "screenshot": str(shot),
     }
+    if sched_dt:
+        result["scheduled_at"] = sched_dt.strftime("%Y-%m-%d %H:%M")
+        result["message"] = f"{sched_dt:%Y-%m-%d %H:%M} 에 예약 발행되도록 설정했어요."
     if category is not None:
         result["category_applied"] = category_applied
     if blocks_failed:

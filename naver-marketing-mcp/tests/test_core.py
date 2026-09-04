@@ -110,6 +110,25 @@ def test_images_url_passthrough(_tmp: Path) -> None:
     assert images.prep_for_instagram(["https://x/y.jpg"]) == ["https://x/y.jpg"]
 
 
+def test_parse_schedule(_tmp: Path) -> None:
+    from datetime import datetime, timedelta
+    from naver_marketing_mcp.naver_blog import _parse_schedule
+    far = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
+    # 10분 단위 반올림
+    assert _parse_schedule(f"{far} 09:07").minute == 10
+    assert _parse_schedule(f"{far} 09:02").minute == 0
+    # 59분은 다음 시각 00분으로 올림
+    d = _parse_schedule(f"{far} 09:56")
+    assert d.hour == 10 and d.minute == 0
+    # 과거와 형식 오류는 거부
+    for bad in ["2020-01-01 09:00", "not-a-date"]:
+        try:
+            _parse_schedule(bad)
+            raise AssertionError(f"거부돼야 함: {bad}")
+        except ValueError:
+            pass
+
+
 def _run() -> None:
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):
