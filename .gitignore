@@ -37,3 +37,7 @@ venv/
 # 빌드 산출물
 dist/
 build/
+
+# mcpb 번들 빌드 산출물(uv 바이너리는 빌드시 복사)
+mcpb/bin/
+*.mcpb
