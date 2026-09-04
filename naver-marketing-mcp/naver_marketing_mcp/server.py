@@ -52,6 +52,7 @@ def naver_blog_publish(
     blocks: list[dict] | None = None,
     category: str | None = None,
     visibility: str | None = None,
+    font: str | None = None,
     private: bool = True,
     approve: bool = False,
 ) -> dict:
@@ -76,6 +77,10 @@ def naver_blog_publish(
             지정 시 body_markdown/image_paths 대신 이 순서대로 삽입한다.
         category: 발행 카테고리 이름(블로그에 있는 이름과 정확히 일치).
         visibility: public|neighbor|both|private (미지정 시 private 파라미터 사용).
+        font: 본문 기본 글꼴. 가능한 값: 기본서체, 나눔고딕, 나눔명조, 나눔바른고딕,
+            나눔스퀘어, 마루부리, 다시시작해, 바른히피, 우리딸손글씨.
+            감성 글엔 마루부리나 손글씨 계열(다시시작해, 우리딸손글씨)이 잘 어울린다.
+            블록마다 다르게 주려면 블록에 {"font":"..."} 를 넣는다.
         approve: True 여야 실제 게시. 기본 False(초안만).
     """
     policy = load_policy()
@@ -100,6 +105,7 @@ def naver_blog_publish(
                 "tags": tags or [],
                 "category": category,
                 "visibility": visibility or ("private" if private else "public"),
+                "font": font or "기본(네이버 기본 글꼴)",
             },
             "next": "이 미리보기를 확인한 뒤 approve=True 로 다시 호출하면 게시됩니다.",
         }
@@ -123,6 +129,7 @@ def naver_blog_publish(
             blocks=blocks,
             category=category,
             visibility=visibility,
+            font=font,
             private=private,
         )
     except Exception as e:  # noqa: BLE001 — 사용자에게 원인 전달 후 로그

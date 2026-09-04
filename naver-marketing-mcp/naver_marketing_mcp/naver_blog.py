@@ -50,6 +50,7 @@ SELECTORS = {
     "style_text": ".se-toolbar-option-text-format-text-button",
     "style_heading": ".se-toolbar-option-text-format-sectionTitle-button",
     "style_quote": ".se-toolbar-option-text-format-quotation-button",
+    "font_trigger": "button.se-font-family-toolbar-button",  # 글꼴 바꾸기
     "publish_open_btn": "button.publish_btn__m9KHH",
     "tag_input": "input#tag-input",                 # 발행 패널 태그 입력
     "category_trigger": "button.selectbox_button__jb1Dt",  # 발행 패널 카테고리
@@ -60,6 +61,20 @@ SELECTORS = {
 _VISIBILITY = {
     "public": "open_public", "neighbor": "open_neighbor",
     "both": "open_both_neighbor", "private": "open_private",
+}
+
+# 글꼴 이름 → 옵션 버튼 접미사 (SmartEditor ONE, 2026-09 실측)
+# 나눔손글씨 계열(다시시작해, 바른히피, 우리딸손글씨)은 감성 글에 잘 어울린다.
+_FONTS = {
+    "기본서체": "system",
+    "나눔고딕": "nanumgothic",
+    "나눔명조": "nanummyeongjo",
+    "나눔바른고딕": "nanumbarungothic",
+    "나눔스퀘어": "nanumsquare",
+    "마루부리": "nanummaruburi",
+    "다시시작해": "nanumdasisijaghae",
+    "바른히피": "nanumbareunhipi",
+    "우리딸손글씨": "nanumuriddalsongeulssi",
 }
 
 _TYPE_DELAY = (0.03, 0.12)
@@ -387,6 +402,19 @@ def _set_style(frame: Any, style_key: str) -> None:
     _human_pause(0.3, 0.6)
 
 
+def _set_font(frame: Any, font_name: str) -> None:
+    """이후 입력할 텍스트의 글꼴을 바꾼다. 선택 영역이 없으면 다음 타이핑부터 적용된다."""
+    key = _FONTS.get(font_name)
+    if not key:
+        raise ValueError(
+            f"지원하지 않는 글꼴이에요: {font_name}. 가능한 글꼴: {', '.join(_FONTS)}"
+        )
+    frame.locator(SELECTORS["font_trigger"]).first.click()
+    _human_pause(0.3, 0.6)
+    frame.locator(f"button.se-toolbar-option-font-family-{key}-button").first.click()
+    _human_pause(0.3, 0.6)
+
+
 def _insert_divider(frame: Any) -> None:
     """구분선을 커서 위치에 삽입."""
     frame.locator(SELECTORS["divider_btn"]).first.click()
@@ -464,6 +492,7 @@ def publish(
     blocks: list[dict[str, Any]] | None = None,
     category: str | None = None,       # 발행 카테고리 이름(정확히 일치)
     visibility: str | None = None,     # public|neighbor|both|private (없으면 private 파라미터 사용)
+    font: str | None = None,           # 본문 기본 글꼴(예: 마루부리, 우리딸손글씨). None 이면 네이버 기본
     private: bool = True,      # 기본 비공개(안전). 공개는 명시적으로 False.
     headless: bool = False,    # CDP attach 방식에선 실제 창을 띄운다(무시됨)
 ) -> dict[str, Any]:
@@ -478,6 +507,12 @@ def publish(
     """
     if not session_exists():
         raise RuntimeError("네이버 세션이 없습니다. 먼저 connect_naver 로 로그인해 주세요.")
+
+    # 브라우저를 띄우기 전에 글꼴 이름부터 빠르게 검증(잘못된 이름이면 즉시 안내)
+    if font and font not in _FONTS:
+        raise ValueError(
+            f"지원하지 않는 글꼴이에요: {font}. 가능한 글꼴: {', '.join(_FONTS)}"
+        )
 
     from playwright.sync_api import sync_playwright
 
@@ -528,11 +563,17 @@ def publish(
                 # 본문
                 _require(frame.locator(SELECTORS["body_area"]), "본문 입력칸")
                 _human_pause(0.4, 0.9)
+                # 본문 기본 글꼴(타이핑 전에 지정해야 이후 입력에 적용된다)
+                if font:
+                    _set_font(frame, font)
                 if blocks:
                     for i, blk in enumerate(blocks):
                         t = blk.get("type", "text")
                         txt = (blk.get("text") or "").strip()
                         try:
+                            blk_font = blk.get("font")
+                            if blk_font and t in ("text", "heading", "quote"):
+                                _set_font(frame, blk_font)  # 문단별 글꼴 지정(예: 인용구만 손글씨)
                             if t == "image":
                                 if not blk.get("path"):
                                     continue
