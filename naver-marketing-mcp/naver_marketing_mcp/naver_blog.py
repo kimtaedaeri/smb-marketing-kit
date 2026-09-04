@@ -41,10 +41,22 @@ SELECTORS = {
     "body_area": ".se-section-text .se-text-paragraph",
     "photo_btn": "button.se-image-toolbar-button",  # 로컬 사진 추가 → OS 파일창
     "image_component": ".se-image",                 # 업로드된 이미지 컴포넌트
+    "divider_btn": ".se-insert-horizontal-line-default-toolbar-button",  # 구분선
+    # 문단 스타일(본문/소제목/인용구)
+    "style_trigger": "button.se-text-format-toolbar-button",
+    "style_text": ".se-toolbar-option-text-format-text-button",
+    "style_heading": ".se-toolbar-option-text-format-sectionTitle-button",
+    "style_quote": ".se-toolbar-option-text-format-quotation-button",
     "publish_open_btn": "button.publish_btn__m9KHH",
     "tag_input": "input#tag-input",                 # 발행 패널 태그 입력
-    "private_radio": 'label[for="open_private"]',
+    "category_trigger": "button.selectbox_button__jb1Dt",  # 발행 패널 카테고리
     "publish_confirm_btn": "button.confirm_btn__WEaBq",
+}
+
+# 공개 설정 라디오 id 매핑
+_VISIBILITY = {
+    "public": "open_public", "neighbor": "open_neighbor",
+    "both": "open_both_neighbor", "private": "open_private",
 }
 
 _TYPE_DELAY = (0.03, 0.12)
@@ -286,6 +298,20 @@ def format_draft(
     }
 
 
+def _set_style(frame: Any, style_key: str) -> None:
+    """현재 문단 스타일을 바꾼다. style_key: style_text|style_heading|style_quote."""
+    frame.locator(SELECTORS["style_trigger"]).first.click()
+    _human_pause(0.3, 0.6)
+    frame.locator(SELECTORS[style_key]).first.click()
+    _human_pause(0.3, 0.6)
+
+
+def _insert_divider(frame: Any) -> None:
+    """구분선을 커서 위치에 삽입."""
+    frame.locator(SELECTORS["divider_btn"]).first.click()
+    _human_pause(0.4, 0.8)
+
+
 def _type_text(page: Any, text: str) -> None:
     """포커스된 contenteditable 에 사람 같은 지연으로 타이핑(여러 줄 지원)."""
     lines = text.split("\n")
@@ -302,7 +328,9 @@ def publish(
     body_markdown: str = "",
     tags: list[str] | None = None,
     image_paths: list[str] | None = None,
-    blocks: list[dict[str, Any]] | None = None,  # [{type:text,text}|{type:image,path}] 순서대로
+    blocks: list[dict[str, Any]] | None = None,
+    category: str | None = None,       # 발행 카테고리 이름(정확히 일치)
+    visibility: str | None = None,     # public|neighbor|both|private (없으면 private 파라미터 사용)
     private: bool = True,      # 기본 비공개(안전). 공개는 명시적으로 False.
     headless: bool = False,    # CDP attach 방식에선 실제 창을 띄운다(무시됨)
 ) -> dict[str, Any]:
@@ -357,13 +385,21 @@ def publish(
             _human_pause(0.4, 0.9)
             inserted_images = 0
             if blocks:
-                # 글→이미지→글→이미지… 순서대로 삽입 (자연스러운 배치)
+                # 순서대로 삽입: text, heading(소제목), quote(인용구), divider(구분선), image
                 for blk in blocks:
-                    if blk.get("type") == "image" and blk.get("path"):
+                    t = blk.get("type", "text")
+                    if t == "image" and blk.get("path"):
                         _insert_one_image(page, frame, blk["path"])
                         inserted_images += 1
-                        page.keyboard.press("Enter")  # 이미지 뒤 새 줄
-                    else:
+                        page.keyboard.press("Enter")
+                    elif t == "divider":
+                        _insert_divider(frame)
+                    elif t in ("heading", "quote"):
+                        _set_style(frame, "style_heading" if t == "heading" else "style_quote")
+                        _type_text(page, blk.get("text", ""))
+                        page.keyboard.press("Enter")
+                        _set_style(frame, "style_text")  # 다음 문단은 본문으로 복귀
+                    else:  # text
                         _type_text(page, blk.get("text", ""))
                         page.keyboard.press("Enter")
                     _human_pause(0.3, 0.7)
@@ -378,15 +414,27 @@ def publish(
             frame.locator(SELECTORS["publish_open_btn"]).first.click()
             time.sleep(2.0)
 
+            # 카테고리 선택(이름 정확히 일치). 불일치 시 기본값으로 진행
+            if category:
+                try:
+                    frame.locator(SELECTORS["category_trigger"]).first.click()
+                    _human_pause(0.4, 0.8)
+                    frame.locator("label.radio_label__mB6ia", has_text=category).first.click()
+                    _human_pause(0.3, 0.6)
+                except Exception:  # noqa: BLE001
+                    pass
+
             # 태그 추가
             tags_added = 0
             if tags:
                 tags_added = _add_tags(page, frame, tags)
                 _human_pause(0.3, 0.7)
 
-            # 공개범위: 비공개(기본) / False 면 전체공개(기본 선택) 유지
-            if private:
-                frame.locator(SELECTORS["private_radio"]).click()
+            # 공개 범위: visibility 우선, 없으면 private 파라미터. 전체공개는 기본 선택이라 스킵
+            vis = visibility or ("private" if private else "public")
+            if vis != "public":
+                vid = _VISIBILITY.get(vis, "open_private")
+                frame.locator(f'label[for="{vid}"]').click()
                 _human_pause(0.3, 0.7)
 
             # 최종 발행

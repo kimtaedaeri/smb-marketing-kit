@@ -50,6 +50,8 @@ def naver_blog_publish(
     tags: list[str] | None = None,
     image_paths: list[str] | None = None,
     blocks: list[dict] | None = None,
+    category: str | None = None,
+    visibility: str | None = None,
     private: bool = True,
     approve: bool = False,
 ) -> dict:
@@ -64,9 +66,16 @@ def naver_blog_publish(
         body_markdown: 본문(마크다운).
         tags: 태그 목록.
         image_paths: 본문 뒤에 붙일 로컬 이미지 경로들(단순 방식).
-        blocks: 글·이미지를 순서대로 배치할 때 사용(권장).
-            예: [{"type":"text","text":"..."},{"type":"image","path":"/..png"},{"type":"text",...}]
-            지정 시 body_markdown/image_paths 대신 이 순서대로 삽입한다(글→이미지→글…).
+        blocks: 글과 이미지, 서식을 순서대로 배치(권장). 감성 있는 글엔 소제목과 구분선을 섞어라.
+            블록 종류:
+              {"type":"text","text":"..."}         본문
+              {"type":"heading","text":"..."}      소제목(섹션 제목)
+              {"type":"quote","text":"..."}        인용구 강조
+              {"type":"divider"}                    구분선
+              {"type":"image","path":"/..png"}     사진
+            지정 시 body_markdown/image_paths 대신 이 순서대로 삽입한다.
+        category: 발행 카테고리 이름(블로그에 있는 이름과 정확히 일치).
+        visibility: public|neighbor|both|private (미지정 시 private 파라미터 사용).
         approve: True 여야 실제 게시. 기본 False(초안만).
     """
     policy = load_policy()
@@ -106,6 +115,8 @@ def naver_blog_publish(
             tags=tags,
             image_paths=image_paths,
             blocks=blocks,
+            category=category,
+            visibility=visibility,
             private=private,
         )
     except Exception as e:  # noqa: BLE001 — 사용자에게 원인 전달 후 로그
