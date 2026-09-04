@@ -82,20 +82,26 @@ def naver_blog_publish(
 
     # 수동 어시스트 모드(policy naver.mode=assist): 자동 발행 대신 붙여넣기용 초안 반환(정지 리스크 회피)
     if policy.get("naver", {}).get("mode") == "assist":
-        return naver_blog.format_draft(title, body_markdown, tags, image_paths)
-
-    preview = {
-        "title": title,
-        "body_markdown": body_markdown,
-        "tags": tags or [],
-        "image_count": len(image_paths or []),
-    }
+        return naver_blog.format_draft(title, body_markdown, tags, image_paths, blocks)
 
     if not approve:
+        # 미리보기는 실제 게시될 내용을 그대로 보여준다(blocks·카테고리·공개범위 포함)
+        if blocks:
+            body_preview, img_paths = naver_blog._blocks_to_text(blocks)
+            img_count = len(img_paths)
+        else:
+            body_preview, img_count = body_markdown, len(image_paths or [])
         return {
             "status": "draft",
-            "preview": preview,
-            "next": "초안을 확인한 뒤 approve=True 로 다시 호출하면 게시됩니다.",
+            "preview": {
+                "title": title,
+                "body": body_preview,
+                "image_count": img_count,
+                "tags": tags or [],
+                "category": category,
+                "visibility": visibility or ("private" if private else "public"),
+            },
+            "next": "이 미리보기를 확인한 뒤 approve=True 로 다시 호출하면 게시됩니다.",
         }
 
     # ── 안전장치 ──
@@ -135,7 +141,7 @@ def naver_blog_publish(
 
 
 # ────────────────────────────────────────────────────────────
-# 파워링크 입찰 (퍼포먼스)
+# 네이버 수동 어시스트(붙여넣기용 초안)
 # ────────────────────────────────────────────────────────────
 @mcp.tool()
 def naver_blog_draft(
@@ -150,6 +156,9 @@ def naver_blog_draft(
     return naver_blog.format_draft(title, body_markdown, tags, image_paths)
 
 
+# ────────────────────────────────────────────────────────────
+# 파워링크 입찰 (퍼포먼스)
+# ────────────────────────────────────────────────────────────
 @mcp.tool()
 def powerlink_bidding(dry_run: bool = True) -> dict:
     """네이버 파워링크 키워드 입찰을 1회 실행한다(naver-powerlink-bidding 통합).

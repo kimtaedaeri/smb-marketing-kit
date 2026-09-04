@@ -14,8 +14,10 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import random
+import re
 import shutil
 import subprocess
 import time
@@ -42,6 +44,7 @@ SELECTORS = {
     "photo_btn": "button.se-image-toolbar-button",  # 로컬 사진 추가 → OS 파일창
     "image_component": ".se-image",                 # 업로드된 이미지 컴포넌트
     "divider_btn": ".se-insert-horizontal-line-default-toolbar-button",  # 구분선
+    "quote_btn": ".se-insert-quotation-default-toolbar-button",          # 인용구(삽입 블록)
     # 문단 스타일(본문/소제목/인용구)
     "style_trigger": "button.se-text-format-toolbar-button",
     "style_text": ".se-toolbar-option-text-format-text-button",
@@ -72,8 +75,11 @@ def find_chrome() -> str:
     if system == "Darwin":
         cands = ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
     elif system == "Windows":
+        local = os.environ.get("LOCALAPPDATA", "")
         cands = [r"C:\Program Files\Google\Chrome\Application\chrome.exe",
                  r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"]
+        if local:
+            cands.append(local + r"\Google\Chrome\Application\chrome.exe")
     else:
         cands = ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
                  "/opt/google/chrome/chrome"]
@@ -273,27 +279,52 @@ def _add_tags(page: Any, frame: Any, tags: list[str]) -> int:
     return added
 
 
+def _blocks_to_text(blocks: list[dict[str, Any]]) -> tuple[str, list[str]]:
+    """blocks 를 붙여넣기용 텍스트와 이미지 경로 목록으로 변환."""
+    lines: list[str] = []
+    images: list[str] = []
+    for blk in blocks:
+        t = blk.get("type", "text")
+        txt = (blk.get("text") or "").strip()
+        if t == "heading" and txt:
+            lines.append(f"[소제목] {txt}")
+        elif t == "quote" and txt:
+            lines.append(f"[인용구] {txt}")
+        elif t == "divider":
+            lines.append("———")
+        elif t == "image" and blk.get("path"):
+            images.append(blk["path"])
+            lines.append(f"[사진] {blk['path']}")
+        elif txt:
+            lines.append(txt)
+    return "\n\n".join(lines), images
+
+
 def format_draft(
     title: str,
-    body_markdown: str,
+    body_markdown: str = "",
     tags: list[str] | None = None,
     image_paths: list[str] | None = None,
+    blocks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """자동 발행 대신 '붙여넣기용 초안'을 만든다(수동 어시스트 · 정지 리스크 회피 폴백).
+    """자동 발행 대신 '붙여넣기용 초안'을 만든다(수동 어시스트, 정지 리스크 회피 폴백).
 
-    브라우저를 건드리지 않는다. 사장님이 네이버 글쓰기에 직접 붙여넣으면 된다.
+    브라우저를 건드리지 않는다. blocks 가 있으면 서식 구조를 그대로 담는다.
     """
     tag_line = " ".join(f"#{t.lstrip('#').strip()}" for t in (tags or []) if t.strip())
-    parts = [f"[제목]\n{title}", f"[본문]\n{body_markdown.strip()}"]
+    if blocks:
+        body, imgs = _blocks_to_text(blocks)
+    else:
+        body, imgs = body_markdown.strip(), list(image_paths or [])
+    parts = [f"[제목]\n{title}", f"[본문]\n{body}"]
     if tag_line:
         parts.append(f"[태그]\n{tag_line}")
-    copy_text = "\n\n".join(parts)
     return {
         "status": "draft",
         "mode": "assist",
-        "copy_text": copy_text,
-        "image_paths": image_paths or [],
-        "how": "네이버 블로그 글쓰기에 위 [제목]/[본문]을 붙여넣고, 이미지는 직접 첨부한 뒤 발행하세요. "
+        "copy_text": "\n\n".join(parts),
+        "image_paths": imgs,
+        "how": "네이버 블로그 글쓰기에 위 내용을 붙여넣고, 이미지는 직접 첨부한 뒤 발행하세요. "
                "자동 발행보다 안전합니다(계정 보호).",
     }
 
@@ -310,6 +341,15 @@ def _insert_divider(frame: Any) -> None:
     """구분선을 커서 위치에 삽입."""
     frame.locator(SELECTORS["divider_btn"]).first.click()
     _human_pause(0.4, 0.8)
+
+
+def _insert_quote(page: Any, frame: Any, text: str) -> None:
+    """인용구는 문단 스타일이 아니라 '인용구 삽입' 블록이다. 삽입 후 텍스트를 넣고 빠져나온다."""
+    frame.locator(SELECTORS["quote_btn"]).first.click()
+    _human_pause(0.5, 0.9)
+    _type_text(page, text)
+    page.keyboard.press("Enter")   # 인용구 블록 종료(빈 줄이면 블록 밖으로)
+    _human_pause(0.2, 0.4)
 
 
 def _type_text(page: Any, text: str) -> None:
@@ -361,130 +401,164 @@ def publish(
             page.goto(WRITE_URL.format(blog_id=blog_id), wait_until="domcontentloaded")
             time.sleep(6)  # SmartEditor 로딩
 
+            # 세션 만료 감지: 로그인 페이지로 튕겼으면 즉시 명확히 안내(30초 행 방지)
+            if "nid.naver.com" in page.url or "nidlogin" in page.url:
+                browser.close()
+                raise RuntimeError(
+                    "네이버 세션이 만료됐어요. connect_naver 로 다시 로그인해 주세요."
+                )
+
             frame = page.frame_locator(SELECTORS["editor_iframe"])
-
-            # 이어쓰기(작성 중 글) 팝업 dismiss — '취소'(se-popup-button-cancel)로 새 글 시작
-            try:
-                mf_el = page.query_selector("iframe#mainFrame")
-                mff = mf_el.content_frame() if mf_el else None
-                if mff:
-                    btn = mff.wait_for_selector("button.se-popup-button-cancel", timeout=4000)
-                    if btn:
-                        btn.click(force=True)
-                        _human_pause(0.6, 1.1)
-            except Exception:  # noqa: BLE001
-                pass
-
-            # 제목 입력
-            frame.locator(SELECTORS["title_area"]).first.click()
-            _human_pause(0.4, 0.9)
-            _type_text(page, title)
-
-            # 본문 입력
-            frame.locator(SELECTORS["body_area"]).first.click()
-            _human_pause(0.4, 0.9)
             inserted_images = 0
-            if blocks:
-                # 순서대로 삽입: text, heading(소제목), quote(인용구), divider(구분선), image
-                for blk in blocks:
-                    t = blk.get("type", "text")
-                    if t == "image" and blk.get("path"):
-                        _insert_one_image(page, frame, blk["path"])
-                        inserted_images += 1
-                        page.keyboard.press("Enter")
-                    elif t == "divider":
-                        _insert_divider(frame)
-                    elif t in ("heading", "quote"):
-                        _set_style(frame, "style_heading" if t == "heading" else "style_quote")
-                        _type_text(page, blk.get("text", ""))
-                        page.keyboard.press("Enter")
-                        _set_style(frame, "style_text")  # 다음 문단은 본문으로 복귀
-                    else:  # text
-                        _type_text(page, blk.get("text", ""))
-                        page.keyboard.press("Enter")
-                    _human_pause(0.3, 0.7)
-            else:
-                _type_text(page, body_markdown)
-                _human_pause(0.6, 1.2)
-                if image_paths:
-                    inserted_images = _insert_images(page, frame, image_paths)
-                    _human_pause(0.6, 1.2)
-
-            # 발행 설정 패널 열기
-            frame.locator(SELECTORS["publish_open_btn"]).first.click()
-            time.sleep(2.0)
-
-            # 카테고리 선택(이름 정확히 일치). 불일치 시 기본값으로 진행
-            if category:
+            tags_added = 0
+            blocks_failed: list[dict[str, Any]] = []
+            category_applied: bool | None = None
+            try:
+                # 이어쓰기(작성 중 글) 팝업 dismiss — '취소'로 새 글 시작
                 try:
-                    frame.locator(SELECTORS["category_trigger"]).first.click()
-                    _human_pause(0.4, 0.8)
-                    frame.locator("label.radio_label__mB6ia", has_text=category).first.click()
-                    _human_pause(0.3, 0.6)
+                    mf_el = page.query_selector("iframe#mainFrame")
+                    mff = mf_el.content_frame() if mf_el else None
+                    if mff:
+                        btn = mff.wait_for_selector("button.se-popup-button-cancel", timeout=4000)
+                        if btn:
+                            btn.click(force=True)
+                            _human_pause(0.6, 1.1)
                 except Exception:  # noqa: BLE001
                     pass
 
-            # 태그 추가
-            tags_added = 0
-            if tags:
-                tags_added = _add_tags(page, frame, tags)
-                _human_pause(0.3, 0.7)
+                # 제목
+                frame.locator(SELECTORS["title_area"]).first.click()
+                _human_pause(0.4, 0.9)
+                _type_text(page, title)
 
-            # 공개 범위: visibility 우선, 없으면 private 파라미터. 전체공개는 기본 선택이라 스킵
-            vis = visibility or ("private" if private else "public")
-            if vis != "public":
-                vid = _VISIBILITY.get(vis, "open_private")
-                frame.locator(f'label[for="{vid}"]').click()
-                _human_pause(0.3, 0.7)
+                # 본문
+                frame.locator(SELECTORS["body_area"]).first.click()
+                _human_pause(0.4, 0.9)
+                if blocks:
+                    for i, blk in enumerate(blocks):
+                        t = blk.get("type", "text")
+                        txt = (blk.get("text") or "").strip()
+                        try:
+                            if t == "image":
+                                if not blk.get("path"):
+                                    continue
+                                _insert_one_image(page, frame, blk["path"])
+                                inserted_images += 1
+                                page.keyboard.press("Enter")
+                            elif t == "divider":
+                                _insert_divider(frame)
+                            elif t == "quote":
+                                if not txt:
+                                    continue
+                                _insert_quote(page, frame, txt)
+                            elif t == "heading":
+                                if not txt:
+                                    continue
+                                _set_style(frame, "style_heading")
+                                _type_text(page, txt)
+                                page.keyboard.press("Enter")
+                                _set_style(frame, "style_text")  # 다음 문단은 본문
+                            else:  # text
+                                if not txt:
+                                    continue
+                                _type_text(page, txt)
+                                page.keyboard.press("Enter")
+                        except Exception as e:  # noqa: BLE001
+                            blocks_failed.append({"index": i, "type": t, "error": str(e)[:80]})
+                        _human_pause(0.3, 0.7)
+                else:
+                    _type_text(page, body_markdown)
+                    _human_pause(0.6, 1.2)
+                    if image_paths:
+                        inserted_images = _insert_images(page, frame, image_paths)
+                        _human_pause(0.6, 1.2)
 
-            # 최종 발행
-            frame.locator(SELECTORS["publish_confirm_btn"]).click()
+                # 발행 설정 패널 열기
+                frame.locator(SELECTORS["publish_open_btn"]).first.click()
+                time.sleep(2.0)
 
-            # 발행 후 글 URL 로 이동 대기. 편집기가 iframe 이라 발행 시 top page 가 아니라
-            # 하위 프레임이 글 페이지로 이동한다 → 모든 프레임에서 글 URL 패턴을 스캔.
-            def _looks_post(u: str) -> bool:
-                if not u or "Write" in u or "PostWriteForm" in u:
-                    return False
-                last = u.rstrip("/").split("/")[-1].split("?")[0]
-                return "logNo=" in u or "PostView" in u or (blog_id in u and last.isdigit())
-
-            def _find_post_url() -> str | None:
-                for f in page.frames:
-                    if _looks_post(f.url):
-                        return f.url
-                # og:url / canonical (게시 후 글 페이지)
-                for f in page.frames:
+                # 카테고리(정확 일치). 불일치/실패는 category_applied=False 로 알린다
+                if category:
+                    category_applied = False
                     try:
-                        og = f.evaluate(
-                            "() => { const m=document.querySelector('meta[property=\"og:url\"]');"
-                            " const c=document.querySelector('link[rel=canonical]');"
-                            " return (m&&m.content)||(c&&c.href)||''; }"
-                        )
-                        if _looks_post(og):
-                            return og
+                        frame.locator(SELECTORS["category_trigger"]).first.click()
+                        _human_pause(0.4, 0.8)
+                        exact = re.compile(rf"^{re.escape(category)}$")
+                        frame.locator("label.radio_label__mB6ia", has_text=exact
+                                      ).first.click(timeout=3000)
+                        category_applied = True
+                        _human_pause(0.3, 0.6)
                     except Exception:  # noqa: BLE001
-                        pass
-                return None
+                        category_applied = False
 
-            deadline = time.time() + 20
-            while time.time() < deadline:
-                post_url = _find_post_url()
-                if post_url:
-                    break
-                time.sleep(1.0)
-            try:
+                # 태그
+                if tags:
+                    tags_added = _add_tags(page, frame, tags)
+                    _human_pause(0.3, 0.7)
+
+                # 공개 범위: visibility 우선, 없으면 private. 전체공개는 기본 선택이라 스킵
+                vis = visibility or ("private" if private else "public")
+                if vis != "public":
+                    vid = _VISIBILITY.get(vis, "open_private")
+                    frame.locator(f'label[for="{vid}"]').click()
+                    _human_pause(0.3, 0.7)
+
+                # 최종 발행
+                frame.locator(SELECTORS["publish_confirm_btn"]).click()
+
+                # 글 URL 회수(발행 시 하위 프레임이 글 페이지로 이동)
+                def _looks_post(u: str) -> bool:
+                    if not u or "Write" in u or "PostWriteForm" in u:
+                        return False
+                    last = u.rstrip("/").split("/")[-1].split("?")[0]
+                    return "logNo=" in u or "PostView" in u or (blog_id in u and last.isdigit())
+
+                def _find_post_url() -> str | None:
+                    for f in page.frames:
+                        if _looks_post(f.url):
+                            return f.url
+                    for f in page.frames:
+                        try:
+                            og = f.evaluate(
+                                "() => { const m=document.querySelector('meta[property=\"og:url\"]');"
+                                " const c=document.querySelector('link[rel=canonical]');"
+                                " return (m&&m.content)||(c&&c.href)||''; }"
+                            )
+                            if _looks_post(og):
+                                return og
+                        except Exception:  # noqa: BLE001
+                            pass
+                    return None
+
+                deadline = time.time() + 20
+                while time.time() < deadline:
+                    post_url = _find_post_url()
+                    if post_url:
+                        break
+                    time.sleep(1.0)
                 page.screenshot(path=str(shot))
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception:
+                # 실패 시 진단용 스크린샷을 남기고 원인 전달
+                try:
+                    page.screenshot(path=str(_AUTH_DIR / "last_error_screen.png"))
+                except Exception:  # noqa: BLE001
+                    pass
+                raise
             browser.close()
     finally:
         _stop_chrome(proc)
 
-    return {
+    result = {
         "status": "published",
         "private": private,
+        "visibility": visibility or ("private" if private else "public"),
         "post_url": post_url,
         "images_inserted": inserted_images,
         "tags_added": tags_added,
         "screenshot": str(shot),
     }
+    if category is not None:
+        result["category_applied"] = category_applied
+    if blocks_failed:
+        result["blocks_failed"] = blocks_failed
+    return result
