@@ -35,12 +35,27 @@ Blotato·Higgsfield가 못 하는 한국 갭만 담당합니다.
 
 ## 설치
 
+### 방법 1. 앱에서 더블클릭 (터미널 모름, 추천)
+
+Claude 데스크톱 앱을 쓰면 `.mcpb` 파일을 더블클릭해 설치합니다. 파이썬도 uv도 미리 안 깔아도 됩니다(번들에 uv 포함). 자세한 안내는 [docs/설치_앱_더블클릭.md](../docs/설치_앱_더블클릭.md). 번들 빌드는 [mcpb/](../mcpb/) 참고. (현재 macOS arm64)
+
+### 방법 2. 한 줄 설치 (Claude Code, 터미널)
+
+```bash
+claude mcp add smb-marketing -- uvx smb-marketing-naver-mcp@latest
+```
+
+`@latest` 를 붙여야 최신 버전을 받습니다. 처음 대화에서 "네이버 블로그 연결해줘, 아이디는 OOO" 로 블로그 아이디를 한 번 알려주면 저장됩니다.
+
+### 방법 3. 소스로 개발 설치
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
-playwright install chromium
 claude mcp add naver-marketing -- python -m naver_marketing_mcp
 ```
+
+크로미움 다운로드는 필요 없습니다(시스템 크롬에 붙습니다).
 
 ## 안전장치 (코드에 내장)
 - **승인 게이트**: `naver_blog_publish(approve=False)` 는 초안만 반환, `approve=True` 여야 실제 게시.
